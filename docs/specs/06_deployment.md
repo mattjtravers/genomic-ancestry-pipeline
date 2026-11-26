@@ -8,10 +8,13 @@
 
 ## Container Images
 
-- [ ] **DEPLOY-BE-023**: The Lambda inference container image shall be built from `Dockerfile.predict` using `public.ecr.aws/lambda/python:3.12` as the base; all runtime Python dependencies (XGBoost, scikit-learn, pandas, NumPy, Pydantic, boto3, requests) shall be installed; the `genomic_ancestry_pipeline` package shall be copied to `${LAMBDA_TASK_ROOT}`; the Lambda handler entry point shall be `genomic_ancestry_pipeline.deployment.lambda_handler`.
+- [ ] **DEPLOY-BE-023**: The Lambda inference container image shall be built from `Dockerfile.predict` using `public.ecr.aws/lambda/python:3.12` as the base; the `pip install` in `Dockerfile.predict` shall name exactly `xgboost-cpu`, NumPy, Pydantic, and boto3 (their transitive dependencies are permitted), and scikit-learn, pandas, requests, and sagemaker shall not be installed in the image; the `genomic_ancestry_pipeline` package shall be copied to `${LAMBDA_TASK_ROOT}`; the Lambda handler entry point shall be `genomic_ancestry_pipeline.deployment.lambda_handler`.
 - [ ] **DEPLOY-BE-024**: The SageMaker training container shall provide an executable `train` script on `PATH` (at `/opt/ml/code/train`) that invokes `python -m genomic_ancestry_pipeline.sagemaker_train`; SageMaker BYOC calls `docker run <image> train`, overriding `CMD`, so the named executable is required. The entry point module shall read `PHENO_S3_BUCKET`, `MODEL_RUN_ID`, `K_FOLDS`, `MAF_THRESHOLD`, `TOP_N`, and `RANDOM_STATE` from environment variables and orchestrate the full training pipeline in sequence: `load_raw_dataset` → `preprocess` → `build_feature_matrix` → `train` → `save_artifact`.
 - [ ] **DEPLOY-BE-025**: Before each SageMaker training job submission, `bin/03_train.sh` shall build `Dockerfile.train`, push the resulting image to the ECR repository `phenotype-pipeline-training` in `us-east-1`, and export the image URI as `PHENO_TRAINING_IMAGE_URI`; the training launcher shall read `PHENO_TRAINING_IMAGE_URI` as the container image URI passed to `sagemaker.estimator.Estimator`.
 - [ ] **DEPLOY-BE-026**: The SageMaker Training Role shall have ECR pull permissions (`ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer`, `ecr:BatchCheckLayerAvailability`) on the `phenotype-pipeline-training` repository; these shall be satisfied by the `AmazonSageMakerFullAccess` managed policy attached in `bin/01_setup_aws.sh`.
+
+- [ ] **DEPLOY-BE-038**: Importing `genomic_ancestry_pipeline.deployment` shall succeed when scikit-learn, pandas, and requests cannot be imported.
+- [ ] **DEPLOY-BE-039**: Importing `genomic_ancestry_pipeline.deployment` shall perform no S3 read and shall not load the model artifact bundle; the first bundle load shall happen inside a request, per `DEPLOY-BE-021`.
 
 ## SageMaker Training Job
 

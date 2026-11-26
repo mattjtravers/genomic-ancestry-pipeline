@@ -11,6 +11,9 @@ import json
 import logging
 import os
 import re
+import subprocess
+import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import botocore.exceptions
@@ -583,3 +586,54 @@ def test_load_interrupted_by_timeout_is_not_recorded_as_failed():
 
     assert calls["n"] == 2, "The next request must re-attempt the interrupted load"
     assert response["statusCode"] == 200
+
+
+# ── Inference import footprint — DEPLOY-BE-038 / 039 ──────────────────────────
+
+_CHILD_SCRIPT = Path(__file__).parent / "_inference_without_training_libs.py"
+
+
+# @spec DEPLOY-BE-038, DEPLOY-BE-039
+def test_handler_module_imports_without_training_libs_and_without_aws_calls():
+    """Fresh interpreter: sklearn/pandas/requests blocked, every boto3 entry point fails.
+
+    A fresh process is required because this test process has already imported
+    the handler module, xgboost and scikit-learn.
+    """
+    proc = subprocess.run(
+        [sys.executable, str(_CHILD_SCRIPT), "import-deployment"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    assert proc.stdout.startswith("OK"), proc.stdout
+
+
+# ── Booster output-shape failure maps to INFERENCE_FAILED — PRED-PROC-017 ─────
+
+
+# @spec DEPLOY-BE-022, PRED-PROC-017
+def test_lambda_returns_500_inference_failed_when_booster_output_shape_is_wrong(
+    minimal_vcf_bytes, feature_registry
+):
+    import numpy as np
+    import xgboost as xgb
+
+    booster = MagicMock(spec=xgb.Booster)
+    booster.predict.return_value = np.array([1.0])  # class index, not probabilities
+    artifact = {
+        "booster": booster,
+        "feature_registry": feature_registry,
+        "imputation_medians": {e.variant_id: 1.0 for e in feature_registry.features},
+        "label_encoder": {0: "blue", 1: "brown", 2: "green"},
+        "evaluation_report": {},
+    }
+    event = _http_api_event(
+        "POST", "/predict", body=json.dumps({"vcf": minimal_vcf_bytes.decode()})
+    )
+    with patch("genomic_ancestry_pipeline.deployment.load_artifact", return_value=artifact), \
+         patch.dict("genomic_ancestry_pipeline.deployment._artifact_cache", clear=True):
+        response = lambda_handler(event, context=None)
+    assert response["statusCode"] == 500
+    assert _body(response).get("error") == "INFERENCE_FAILED"

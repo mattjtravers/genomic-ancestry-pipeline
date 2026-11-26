@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.12.*"
 resolution-markers = [
     "sys_platform == 'win32'",
@@ -587,7 +587,7 @@ dev = [
     { name = "moto", extras = ["s3", "sagemaker"], specifier = "==5.2.1" },
     { name = "pytest", specifier = "==9.0.3" },
     { name = "pyyaml", specifier = "==6.0.3" },
-    { name = "ruff", specifier = ">=0.11" },
+    { name = "ruff", specifier = "==0.15.14" },
 ]
 
 [[package]]

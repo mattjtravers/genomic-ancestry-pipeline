@@ -47,7 +47,7 @@ The pipeline uses two distinct container images — one for SageMaker training, 
 
 **Training image** (`Dockerfile.train`): installs runtime ML dependencies (XGBoost, scikit-learn, pandas, NumPy, Pydantic, boto3), copies `src/genomic_ancestry_pipeline/` to `/opt/ml/code/genomic_ancestry_pipeline/`, and sets `PYTHONPATH=/opt/ml/code`. Built and pushed to the ECR repository `phenotype-pipeline-training` by `bin/03_train.sh`; the resulting URI is exported as `PHENO_TRAINING_IMAGE_URI` for the training launcher.
 
-**Inference image** (`Dockerfile.predict`): built from the AWS Lambda Python 3.12 base, which bundles the Lambda Runtime Interface Client as `ENTRYPOINT`. Copies `src/genomic_ancestry_pipeline/` to `${LAMBDA_TASK_ROOT}`. Does not include `sagemaker` (a training dependency not needed at inference time). Published automatically by `sam build && sam deploy`.
+**Inference image** (`Dockerfile.predict`): built from the AWS Lambda Python 3.12 base, which bundles the Lambda Runtime Interface Client as `ENTRYPOINT`. Its `pip install` names only what inference imports — `xgboost-cpu`, NumPy, Pydantic, and boto3 (their own dependencies, such as SciPy, come with them) — and copies `src/genomic_ancestry_pipeline/` to `${LAMBDA_TASK_ROOT}`. Training-only libraries (`sagemaker`, scikit-learn, pandas) and requests are left out, because every installed library that `xgboost` or the handler imports adds to the cold start (§ Cold start). `xgboost-cpu` is the CPU-only build of the same XGBoost release: Lambda has no GPU, and the default `xgboost` wheel carries a GPU-enabled native library plus the NVIDIA NCCL package, several hundred megabytes that a cold container would otherwise pull from ECR. The training image keeps the default `xgboost` wheel. Published automatically by `sam build && sam deploy`.
 
 The two images are kept separate because Lambda requires the Lambda RIC as `ENTRYPOINT` and SageMaker requires a training script as `CMD`; combining them into one image would require entry-point switching logic and obscure both contracts.
 
@@ -94,10 +94,18 @@ The prediction component runs as a Lambda function:
 - **Runtime**: Python 3.12 (container image Lambda to include XGBoost)
 - **Trigger**: API Gateway **HTTP API** endpoint (REST API is rejected — see § API routes)
 - **Memory**: 3008 MB (XGBoost model loading requires headroom)
-- **Timeout**: 29 seconds — one second under API Gateway HTTP API's fixed 30-second integration timeout, so a slow invocation ends in the Lambda and returns through the API rather than being cut off by the gateway
+- **Timeout**: 29 seconds — one second under API Gateway HTTP API's fixed 30-second integration timeout, so a slow request handler ends in the Lambda and returns through the API rather than being cut off by the gateway. This holds only while the init phase completes in time; see § Cold start.
 - **Environment variables**: `PHENO_S3_BUCKET`, `MODEL_RUN_ID`
 
 The pipeline trains exactly one model. The Lambda handler loads the model artifact from the S3 path identified by the `MODEL_RUN_ID` environment variable, set once at deploy time. The artifact is cached in `/tmp` on cold start and reused for warm invocations. No model selection logic is needed.
+
+### Cold start
+
+A cold request pays for three things in sequence: the execution environment starting from the container image, the **init phase** (importing `genomic_ancestry_pipeline.deployment` and everything it imports), and the model-bundle load inside the first request (`_ensure_bundle`).
+
+Lambda caps the init phase at 10 seconds. If init runs longer, Lambda abandons it and runs it again inside the first invocation, and that first init's 10 seconds are not counted against the 29-second function timeout. The visitor's request then takes up to 10 + 29 seconds of wall-clock time, and API Gateway answers first with its own `503 {"message": "Service Unavailable"}` at 30 seconds — outside the error contract, though the Lambda may go on to finish and warm its container.
+
+The design therefore keeps the init phase well under 10 seconds by keeping the handler's import graph small: the inference image installs only the libraries inference imports (§ Container Images), and the prediction code uses the plain `xgb.Booster` rather than the scikit-learn wrapper (`docs/llds/05_prediction.md § Model Handle`). With scikit-learn and pandas installed, `xgboost` imports both, and they dominate the handler's import time. The model-bundle load stays in the first request rather than the init phase, so a slow S3 read cannot push init past its cap.
 
 ### API routes
 
@@ -211,6 +219,7 @@ Two roles:
 | Run ID format | Timestamp + UUID | Incrementing integer, git SHA | Timestamps sort naturally; UUIDs prevent collisions; git SHA would require a git context in SageMaker |
 | Inference IaC | AWS SAM | AWS CDK, Terraform, plain boto3 scripts | SAM is the industry-standard declarative tool for the Lambda + API Gateway shape; ships with `sam local invoke` for in-Docker local execution; CDK is heavier for a single function; Terraform would not gain us anything for a one-stack project |
 | Training launch interface | SageMaker Python SDK (`Estimator`) | Raw boto3 `create_training_job`, SAM/CFN `AWS::SageMaker::TrainingJob`, Step Functions | SDK is the canonical AWS-blessed way to launch training; CFN resource is rarely used in practice because training is imperative/one-shot; Step Functions adds orchestration we don't need yet |
+| Inference image contents | Only the libraries inference imports (`xgboost-cpu`, NumPy, Pydantic, boto3) | Mirror the training image's dependency list; move the model load into the init phase; provisioned concurrency | Each extra library `xgboost` or the handler imports lengthens init, and init over Lambda's 10-second cap pushes the first request past the gateway's 30-second cutoff. Loading the model at init would put an S3 read inside that same 10-second cap. Provisioned concurrency removes cold starts but bills around the clock (`docs/high-level-design.md § Key Design Decisions`). The default `xgboost` wheel was rejected for inference because its GPU library and NCCL dependency serve no purpose on Lambda and dominate the image size. |
 | Container image strategy | Two separate images (`Dockerfile.train` for SageMaker, `Dockerfile.predict` for Lambda) | Single multi-purpose image with entry-point switching | Lambda requires the Lambda RIC as `ENTRYPOINT`; SageMaker requires a training `CMD`. A shared image would need runtime switching logic and would obscure both contracts; separate images keep each boundary explicit and independently deployable |
 | `run_id` ownership | Generated by the launcher before `Estimator.fit` | Generated inside the training container | Launcher needs to know the output S3 path before the job starts (for stdout contract + downstream `sam deploy` binding); container would not be able to publish `run_id` synchronously |
 | Browser access | HTTP API `CorsConfiguration` allowing only `https://mattjtravers.github.io` and `http://localhost:8000` | Allow `*`; allow any localhost port; set CORS headers in the Lambda handler; proxy through a backend | A wildcard would let any web page spend the API's budget from visitors' browsers. One fixed local port is enough for the local preview; allowing any localhost port widens the list for no need. Handler-set headers would require the Lambda to answer `OPTIONS` preflights, paying a Lambda invocation per preflight. A proxy reintroduces a server to host. |
@@ -228,7 +237,7 @@ Two roles:
 4. ✅ SAM owns inference IaC; SageMaker Python SDK owns training launch; the two halves are intentionally separate tools
 
 ### Open
-1. Cold-start duration against the 29-second timeout. The container start plus model-bundle load has not been measured on the deployed Lambda. If it is near or over 29 seconds, the warm-up cannot complete and every first request times out. The first lever is the inference image's dependency list (`DEPLOY-BE-023`): pandas, scikit-learn, and requests are installed today, and each is a candidate for removal if inference does not need it.
+1. Whether the trimmed inference image keeps the init phase under 10 seconds and a cold `GET /health` under 30 seconds end to end. Measured after each image change from the `INIT_REPORT` / `REPORT` lines in the function's log group and the client-side time of the first `GET /health`.
 
 ### Deferred
 1. API Gateway authentication (API key vs Cognito) — out of scope for SDD demo; the browser client could not keep an API key secret in any case
