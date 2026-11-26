@@ -3,7 +3,7 @@
 ## Artifact Loading
 
 - [x] **PRED-PROC-001**: The `predict` function shall accept a pre-loaded artifact bundle dict from the caller and shall not load from S3 internally; the caller is responsible for providing a complete bundle (as defined in TRAIN-DATA-001) before invoking inference.
-- [ ] **PRED-PROC-002**: The system shall record the S3 bundle prefix of the artifact used in every `PredictionResult` under `model_artifact_version`, in the form `models/{run_id}/` (e.g. `models/20240115-a3f2c1/`).
+- [x] **PRED-PROC-002**: The system shall record the S3 bundle prefix of the artifact used in every `PredictionResult` under `model_artifact_version`, in the form `models/{run_id}/` (e.g. `models/20240115-a3f2c1/`).
 
 - [x] **PRED-PROC-014**: `load_artifact()` shall deserialize `model.json` into a plain `xgb.Booster` and return it under the bundle key `booster`; it shall not construct an `xgb.XGBClassifier`.
 - [x] **PRED-PROC-016**: `predict()` shall accept the bundle's `booster` only as an `xgb.Booster`, and shall not call `predict_proba()` or `get_booster()`.

@@ -5,6 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -27,8 +28,51 @@ jobs:
     - name: Install dependencies
       run: uv sync --all-groups
 
+    - name: Install Playwright browser
+      run: uv run playwright install --with-deps chromium
+
     - name: Run Linter
       run: uv run ruff check .
 
     - name: Run Tests
       run: uv run pytest
+
+  # Publishes the static site to GitHub Pages (docs/llds/07_ui.md § Execution
+  # and Delivery). Prerequisites: Pages source = "GitHub Actions", and the
+  # repository variable PHENO_API_ENDPOINT set to the API base URL.
+  # @spec UI-UI-041, UI-UI-042, UI-UI-043, UI-UI-055, UI-UI-056
+  deploy:
+    needs: test
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # A newer push queues behind an in-progress Pages deployment instead of
+    # cancelling it mid-publish.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Assemble site
+      # Standard library only; fails (and so fails the job) if a sample has no result.
+      run: python3 bin/assemble_site.py --out _site --endpoint "${{ vars.PHENO_API_ENDPOINT }}"
+
+    - name: Upload Pages artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: _site
+
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4

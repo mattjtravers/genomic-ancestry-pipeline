@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Genomic Ancestry Pipeline</title>
+  <link rel="stylesheet" href="styles.css">
+  <!-- Generated at deploy time; defines window.PHENO_API_ENDPOINT. If it is
+       missing, the page still runs the sample path and reports itself unconfigured. -->
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Genomic Ancestry Pipeline</h1>
+      <p class="lede">Predicts ancestral population from a single-sample chromosome-15 VCF,
+        with the genetic markers that drove the prediction.</p>
+    </header>
+
+    <section class="panel" aria-labelledby="input-heading">
+      <h2 id="input-heading">Input</h2>
+
+      <details id="sample-section" open hidden>
+        <summary>Don't have a file? Try a sample</summary>
+        <fieldset id="sample-options">
+          <legend class="visually-hidden">Bundled samples</legend>
+        </fieldset>
+      </details>
+
+      <div class="upload">
+        <label for="vcf-file">Upload SNP data (.vcf, one sample, up to 4 MiB)</label>
+        <!-- @spec UI-UI-001 -->
+        <input id="vcf-file" type="file" accept=".vcf">
+        <p id="upload-error" class="error" role="alert"></p>
+      </div>
+
+      <div class="actions">
+        <button id="run-button" type="button" disabled>Run Prediction</button>
+        <span id="loading" class="loading" hidden role="status">Running prediction…</span>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="results-heading">
+      <h2 id="results-heading">Results</h2>
+      <p id="result-message" class="error" role="alert"></p>
+
+      <div id="result" hidden>
+        <p id="result-source" class="source"></p>
+        <dl class="summary">
+          <dt>Predicted population</dt>
+          <dd id="result-phenotype" class="phenotype"></dd>
+          <dt>Confidence</dt>
+          <dd class="confidence">
+            <progress id="result-confidence-bar" max="100" value="0"></progress>
+            <span id="result-confidence"></span>
+          </dd>
+        </dl>
+
+        <h3>Top contributing markers</h3>
+        <div class="chart-wrap">
+          <svg id="marker-chart" role="img" aria-label="SHAP contribution per marker"></svg>
+        </div>
+        <div class="table-wrap">
+          <table id="marker-table">
+            <thead>
+              <tr><th>Rank</th><th>Variant</th><th>Chrom</th><th>Position</th><th>SHAP</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
