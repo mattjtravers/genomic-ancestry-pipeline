@@ -59,7 +59,7 @@ def test_template_parses_as_sam_transform(template):
     ), "template.yaml must declare the AWS::Serverless transform"
 
 
-# @spec DEPLOY-BE-014
+# @spec DEPLOY-BE-014, DEPLOY-BE-008
 def test_template_declares_inference_lambda_function(resources):
     fns = _resources_of_type(resources, "AWS::Serverless::Function")
     assert fns, "template.yaml must declare at least one AWS::Serverless::Function"
@@ -67,7 +67,9 @@ def test_template_declares_inference_lambda_function(resources):
     props = fn.get("Properties", {})
     assert props.get("PackageType") == "Image", "Inference Lambda must be a container image"
     assert props.get("MemorySize") == 3008
-    assert props.get("Timeout") == 60
+    assert props.get("Timeout") == 29, (
+        "Lambda timeout must be 29 s, under API Gateway HTTP API's 30 s integration cutoff"
+    )
 
 
 # @spec DEPLOY-BE-010, DEPLOY-BE-014
@@ -170,4 +172,105 @@ def test_template_validates_via_sam():
     )
     assert result.returncode == 0, (
         f"sam validate failed:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+
+
+# ── HTTP API: /health route, CORS, throttling ─────────────────────────────────
+
+
+def _http_routes(resources: dict) -> dict[tuple[str, str], dict]:
+    """Map (METHOD, path) → HttpApi event properties across all functions."""
+    routes: dict[tuple[str, str], dict] = {}
+    for fn_name, fn in _resources_of_type(resources, "AWS::Serverless::Function").items():
+        for ev in (fn.get("Properties", {}).get("Events", {}) or {}).values():
+            if ev.get("Type") != "HttpApi":
+                continue
+            props = ev.get("Properties", {})
+            key = ((props.get("Method") or "").upper(), props.get("Path") or "")
+            routes[key] = {**props, "_function": fn_name}
+    return routes
+
+
+@pytest.fixture(scope="module")
+def http_api(resources) -> tuple[str, dict]:
+    apis = _resources_of_type(resources, "AWS::Serverless::HttpApi")
+    assert len(apis) == 1, (
+        "template.yaml must declare exactly one explicit AWS::Serverless::HttpApi"
+        " (needed to carry CorsConfiguration and DefaultRouteSettings)"
+    )
+    name, api = next(iter(apis.items()))
+    return name, api.get("Properties", {}) or {}
+
+
+# @spec DEPLOY-BE-028
+def test_template_routes_get_health_to_same_function_as_predict(resources):
+    routes = _http_routes(resources)
+    assert ("GET", "/health") in routes, f"Expected GET /health route; got {sorted(routes)}"
+    assert routes[("GET", "/health")]["_function"] == routes[("POST", "/predict")]["_function"], (
+        "GET /health must integrate with the same Lambda function as POST /predict"
+    )
+
+
+def test_all_routes_attach_to_the_explicit_http_api(resources, http_api):
+    """Routes must hang off the declared HttpApi, or its CORS/throttling would not apply."""
+    api_name, _ = http_api
+    for key, props in _http_routes(resources).items():
+        assert props.get("ApiId") == api_name, (
+            f"Route {key} must set ApiId: !Ref {api_name}; got {props.get('ApiId')!r}"
+        )
+
+
+def _cors(http_api) -> dict:
+    _, props = http_api
+    cors = props.get("CorsConfiguration")
+    assert isinstance(cors, dict), "HttpApi must declare a CorsConfiguration mapping"
+    return cors
+
+
+# @spec DEPLOY-BE-030
+def test_cors_allows_exactly_pages_and_localhost_8000_origins(http_api):
+    assert sorted(_cors(http_api).get("AllowOrigins") or []) == [
+        "http://localhost:8000",
+        "https://mattjtravers.github.io",
+    ]
+
+
+# @spec DEPLOY-BE-031
+def test_cors_allows_exactly_post_and_get(http_api):
+    methods = [m.upper() for m in (_cors(http_api).get("AllowMethods") or [])]
+    assert sorted(methods) == ["GET", "POST"]
+
+
+# @spec DEPLOY-BE-032
+def test_cors_allows_exactly_content_type_header(http_api):
+    headers = [h.lower() for h in (_cors(http_api).get("AllowHeaders") or [])]
+    assert headers == ["content-type"]
+
+
+# @spec DEPLOY-BE-033
+def test_cors_does_not_allow_credentials(http_api):
+    assert _cors(http_api).get("AllowCredentials") is False
+
+
+# @spec DEPLOY-BE-034
+def test_cors_preflight_max_age_is_600(http_api):
+    assert _cors(http_api).get("MaxAge") == 600
+
+
+# @spec DEPLOY-BE-036
+def test_http_api_default_route_throttling_is_2_rps_burst_10(http_api):
+    _, props = http_api
+    settings = props.get("DefaultRouteSettings") or {}
+    assert settings.get("ThrottlingRateLimit") == 2
+    assert settings.get("ThrottlingBurstLimit") == 10
+    assert not props.get("RouteSettings"), (
+        "Per-route RouteSettings would override the default throttle for some routes"
+    )
+
+
+def test_api_endpoint_output_references_the_explicit_http_api(template, http_api):
+    api_name, _ = http_api
+    value = (template.get("Outputs", {}).get("ApiEndpoint", {}) or {}).get("Value", "")
+    assert f"${{{api_name}}}" in value, (
+        f"ApiEndpoint output must reference {api_name}, not the implicit ServerlessHttpApi"
     )

@@ -9,7 +9,7 @@ This module realizes the deployment segment of the arrow of intent:
   reachability, ``run_id`` collision), blocks until terminal status, and
   returns the ``run_id`` on success.
 - :func:`lambda_handler` is the API Gateway HTTP API entry point for
-  ``POST /predict``. It enforces the error contract
+  ``POST /predict`` and ``GET /health``. It enforces the error contract
   defined in ``docs/llds/06_deployment.md § Error contract``.
 
 See ``docs/llds/06_deployment.md`` for the canonical design and
@@ -327,6 +327,11 @@ def _ensure_bundle(request_id: str) -> dict[str, Any] | None:
     short-circuit to ``503 MODEL_UNAVAILABLE`` without retrying. This is the
     behavior mandated by DEPLOY-BE-021.
 
+    Only ``Exception`` subclasses plant the sentinel. An invocation stopped at
+    the Lambda timeout mid-load never reaches the ``except`` clause, so the
+    load is not recorded as failed and the next request re-attempts it
+    (DEPLOY-BE-037).
+
     Args:
         request_id: The AWS request id for log correlation.
 
@@ -397,14 +402,20 @@ def _route(event: dict[str, Any]) -> tuple[str, str]:
 
 
 # @spec DEPLOY-BE-007, DEPLOY-BE-008, DEPLOY-BE-009, DEPLOY-BE-010, DEPLOY-BE-013,
-#       DEPLOY-BE-021, DEPLOY-BE-022
+#       DEPLOY-BE-021, DEPLOY-BE-022, DEPLOY-BE-029, DEPLOY-BE-035, DEPLOY-BE-037
 def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
     """AWS Lambda entry point for the inference API.
 
-    Dispatches API Gateway HTTP API v2 events to the single endpoint:
+    Dispatches API Gateway HTTP API v2 events to two routes:
 
     - ``POST /predict`` — runs inference on a single-sample VCF and returns a
       :class:`PredictionResult` JSON body.
+    - ``GET /health`` — returns ``{"status": "ok"}`` once the model bundle is
+      loaded. The browser client calls it on page load so the cold-start
+      load happens before the visitor's first prediction.
+
+    Responses carry no ``Access-Control-*`` headers; CORS is answered by the
+    HTTP API's ``CorsConfiguration`` (DEPLOY-BE-035).
 
     Before dispatch, :func:`_ensure_bundle` confirms the model artifact has
     been loaded and is complete; any failure short-circuits to
@@ -431,6 +442,9 @@ def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
             return bundle_error
 
         method, path = _route(event)
+
+        if method == "GET" and path == "/health":
+            return _ok_response({"status": "ok"})
 
         if method == "POST" and path == "/predict":
             body_raw = event.get("body")

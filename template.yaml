@@ -21,15 +21,40 @@ Parameters:
 
 Resources:
 
+  # Explicit HTTP API (not the implicit ServerlessHttpApi) so CORS and
+  # throttling can be declared. The browser client on GitHub Pages calls it
+  # directly; throttling is the cost cap for a public, unauthenticated API.
+  # @spec DEPLOY-BE-010, DEPLOY-BE-030, DEPLOY-BE-031, DEPLOY-BE-032,
+  #       DEPLOY-BE-033, DEPLOY-BE-034, DEPLOY-BE-036
+  InferenceHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins:
+          - https://mattjtravers.github.io
+          - http://localhost:8000
+        AllowMethods:
+          - POST
+          - GET
+        AllowHeaders:
+          - Content-Type
+        AllowCredentials: false
+        MaxAge: 600
+      DefaultRouteSettings:
+        ThrottlingRateLimit: 2
+        ThrottlingBurstLimit: 10
+
   # @spec DEPLOY-BE-007, DEPLOY-BE-008, DEPLOY-BE-010, DEPLOY-BE-012,
-  #       DEPLOY-BE-015
+  #       DEPLOY-BE-015, DEPLOY-BE-028
   InferenceFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub phenotype-inference-${ModelRunId}
       PackageType: Image
       MemorySize: 3008
-      Timeout: 60
+      # 29 s: one second under API Gateway HTTP API's fixed 30 s integration
+      # timeout, so the Lambda fails inside the error contract first.
+      Timeout: 29
       Environment:
         Variables:
           MODEL_RUN_ID: !Ref ModelRunId
@@ -44,8 +69,16 @@ Resources:
         PredictRoute:
           Type: HttpApi
           Properties:
+            ApiId: !Ref InferenceHttpApi
             Method: POST
             Path: /predict
+            PayloadFormatVersion: '2.0'
+        HealthRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref InferenceHttpApi
+            Method: GET
+            Path: /health
             PayloadFormatVersion: '2.0'
     Metadata:
       DockerTag: !Ref ModelRunId
@@ -61,8 +94,8 @@ Resources:
 
 Outputs:
   ApiEndpoint:
-    Description: HTTP API endpoint URL (POST /predict).
-    Value: !Sub https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com
+    Description: HTTP API base URL (POST /predict, GET /health).
+    Value: !Sub https://${InferenceHttpApi}.execute-api.${AWS::Region}.amazonaws.com
   FunctionName:
     Description: Inference Lambda function name.
     Value: !Ref InferenceFunction

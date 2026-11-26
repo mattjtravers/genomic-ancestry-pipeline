@@ -477,3 +477,109 @@ def test_lambda_error_response_format_includes_code_detail_and_logs_request_id(c
     assert any(body["error"] in r.getMessage() for r in matching_logs), (
         "logger.error must include the error code"
     )
+
+
+# ── GET /health warm-up route — DEPLOY-BE-029 / 021 ────────────────────────────
+
+
+# @spec DEPLOY-BE-029
+def test_health_loads_bundle_and_returns_200_status_ok():
+    event = _http_api_event("GET", "/health")
+    with patch("genomic_ancestry_pipeline.deployment.load_artifact",
+               return_value=_valid_artifact()) as mock_load, \
+         patch.dict("genomic_ancestry_pipeline.deployment._artifact_cache", clear=True):
+        response = lambda_handler(event, context=None)
+    assert response["statusCode"] == 200
+    assert _body(response) == {"status": "ok"}
+    mock_load.assert_called_once()
+
+
+# @spec DEPLOY-BE-029, DEPLOY-BE-009
+def test_health_warms_the_cache_used_by_predict():
+    """A /health call loads the bundle; the following /predict reuses it without reloading."""
+    health = _http_api_event("GET", "/health")
+    predict_ev = _http_api_event(
+        "POST", "/predict", body=json.dumps({"vcf": "##fileformat=VCFv4.1\n"}),
+    )
+    with patch("genomic_ancestry_pipeline.deployment.load_artifact",
+               return_value=_valid_artifact()) as mock_load, \
+         patch("genomic_ancestry_pipeline.deployment.predict",
+               return_value=MagicMock(model_dump=lambda: {})), \
+         patch.dict("genomic_ancestry_pipeline.deployment._artifact_cache", clear=True):
+        assert lambda_handler(health, context=None)["statusCode"] == 200
+        assert lambda_handler(predict_ev, context=None)["statusCode"] == 200
+    assert mock_load.call_count == 1
+
+
+# @spec DEPLOY-BE-021
+def test_health_returns_503_model_unavailable_when_load_fails():
+    event = _http_api_event("GET", "/health")
+    with patch("genomic_ancestry_pipeline.deployment.load_artifact",
+               side_effect=FileNotFoundError("model.json missing")), \
+         patch.dict("genomic_ancestry_pipeline.deployment._artifact_cache", clear=True):
+        response = lambda_handler(event, context=None)
+    assert response["statusCode"] == 503
+    assert _body(response).get("error") == "MODEL_UNAVAILABLE"
+
+
+# ── CORS headers come from API Gateway only — DEPLOY-BE-035 ───────────────────
+
+
+# @spec DEPLOY-BE-035
+@pytest.mark.parametrize(
+    ("method", "path", "body", "load_side_effect"),
+    [
+        ("GET", "/health", None, None),
+        ("POST", "/predict", json.dumps({"vcf": "##fileformat=VCFv4.1\n"}), None),
+        ("POST", "/predict", "not json", None),
+        ("GET", "/health", None, FileNotFoundError("missing")),
+    ],
+)
+def test_lambda_sets_no_access_control_headers(method, path, body, load_side_effect):
+    event = _http_api_event(method, path, body=body)
+    load_kwargs = (
+        {"side_effect": load_side_effect}
+        if load_side_effect
+        else {"return_value": _valid_artifact()}
+    )
+    with patch("genomic_ancestry_pipeline.deployment.load_artifact", **load_kwargs), \
+         patch("genomic_ancestry_pipeline.deployment.predict",
+               return_value=MagicMock(model_dump=lambda: {})), \
+         patch.dict("genomic_ancestry_pipeline.deployment._artifact_cache", clear=True):
+        response = lambda_handler(event, context=None)
+    headers = response.get("headers") or {}
+    cors_headers = [h for h in headers if h.lower().startswith("access-control-")]
+    assert cors_headers == [], f"Lambda must not set CORS headers; got {cors_headers}"
+
+
+# ── Invocation timeout during load — DEPLOY-BE-037 ────────────────────────────
+
+
+class _InvocationKilled(BaseException):
+    """Stands in for the Lambda runtime terminating an invocation at its timeout.
+
+    The runtime does not raise an ``Exception`` into user code on timeout — the
+    invocation is simply stopped. A ``BaseException`` subclass is the closest
+    in-process analogue: it escapes every ``except Exception`` handler.
+    """
+
+
+# @spec DEPLOY-BE-037
+def test_load_interrupted_by_timeout_is_not_recorded_as_failed():
+    event = _http_api_event("GET", "/health")
+    calls = {"n": 0}
+
+    def load(**kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _InvocationKilled()
+        return _valid_artifact()
+
+    with patch("genomic_ancestry_pipeline.deployment.load_artifact", side_effect=load), \
+         patch.dict("genomic_ancestry_pipeline.deployment._artifact_cache", clear=True):
+        with pytest.raises(_InvocationKilled):
+            lambda_handler(event, context=None)
+        response = lambda_handler(event, context=None)
+
+    assert calls["n"] == 2, "The next request must re-attempt the interrupted load"
+    assert response["statusCode"] == 200
