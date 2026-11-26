@@ -7,6 +7,7 @@
 // latest action wins — starting one aborts the previous action's fetch and any
 // late response from a superseded action is dropped.
 
+import { populationLabel } from "./populations.js";
 import { checkFileMeta, checkFileText } from "./vcf.js";
 
 const MESSAGES = {
@@ -109,11 +110,11 @@ function percent(score) {
   return Math.round(Number.parseFloat((score * 100).toPrecision(12)));
 }
 
-// @spec UI-UI-011, UI-UI-012, UI-UI-032
+// @spec UI-UI-011, UI-UI-012, UI-UI-032, UI-UI-060
 function renderResult(result, sourceText) {
   ui.message.textContent = "";
   ui.source.textContent = sourceText;
-  ui.phenotype.textContent = result.predicted_phenotype;
+  ui.phenotype.textContent = populationLabel(result.predicted_phenotype);
   const pct = percent(result.confidence_score);
   ui.confidence.textContent = `${pct}%`;
   ui.confidenceBar.setAttribute("value", String(pct));

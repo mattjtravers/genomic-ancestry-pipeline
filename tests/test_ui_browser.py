@@ -28,6 +28,12 @@ SAMPLES = REPO / "samples"
 LIVE_RESULT = json.loads((SAMPLES / "sample_snp_2.result.json").read_text())
 PRECOMPUTED_1 = json.loads((SAMPLES / "sample_snp_1.result.json").read_text())
 
+# Display form per UI-UI-011/060: full 1000 Genomes name, then the code in parentheses.
+YRI_DISPLAY = "Yoruba in Ibadan, Nigeria (YRI)"
+CHB_DISPLAY = "Han Chinese in Beijing, China (CHB)"
+assert PRECOMPUTED_1["predicted_phenotype"] == "YRI"
+assert LIVE_RESULT["predicted_phenotype"] == "CHB"
+
 GENERIC = "The prediction request failed — please try again."
 UNAVAILABLE = "The prediction service is starting up or unavailable — please try again in a moment."
 NOT_CONFIGURED = "The prediction service is not configured."
@@ -536,7 +542,7 @@ def test_selecting_sample_renders_precomputed_result_without_api_call(site):
     page = site.open()
     _select_sample(page, "Sample SNP 1")
     expect(page.locator("#result-source")).to_have_text("Precomputed result for Sample SNP 1")
-    expect(page.locator("#result-phenotype")).to_have_text(PRECOMPUTED_1["predicted_phenotype"])
+    expect(page.locator("#result-phenotype")).to_have_text(YRI_DISPLAY)
     assert site.api_calls("/predict") == []
     shown = site.events("precomputed_result_rendered")
     assert shown and shown[0]["level"] == "INFO" and shown[0]["sample"] == "Sample SNP 1"
@@ -587,13 +593,13 @@ def test_missing_precomputed_result_without_endpoint_shows_not_configured(site):
 # ── Results display ────────────────────────────────────────────────────────────
 
 
-# @spec UI-UI-011
+# @spec UI-UI-011, UI-UI-060
 def test_result_shows_label_rounded_confidence_and_progress(site):
     site.predict_response = {"status": 200, "json": {**LIVE_RESULT, "confidence_score": 0.825}}
     page = site.open()
     _upload(page)
     page.click("#run-button")
-    expect(page.locator("#result-phenotype")).to_have_text(LIVE_RESULT["predicted_phenotype"])
+    expect(page.locator("#result-phenotype")).to_have_text(CHB_DISPLAY)
     expect(page.locator("#result-confidence")).to_have_text("83%")
     expect(page.locator("#result-confidence-bar")).to_have_attribute("value", "83")
 
@@ -678,3 +684,48 @@ def test_every_log_event_is_one_json_object_on_the_matching_console_method(site)
         assert set(rec) >= {"level", "event"}
         assert rec["_console"] == method[rec["level"]], rec
     assert {r["level"] for r in site.logs} == {"INFO", "WARN", "ERROR"}
+
+
+# ── Population names — UI-UI-060 ───────────────────────────────────────────────
+
+
+def _population_table(page: Page) -> dict:
+    return page.evaluate("async () => (await import('./populations.js')).POPULATIONS")
+
+
+# @spec UI-UI-060
+def test_population_table_covers_exactly_the_models_26_codes(site):
+    page = site.open()
+    table = _population_table(page)
+    model_codes = set(PRECOMPUTED_1["class_probabilities"])
+    assert len(model_codes) == 26
+    assert set(table) == model_codes
+    assert all(isinstance(v, str) and v and v != k for k, v in table.items())
+
+
+# @spec UI-UI-060
+@pytest.mark.parametrize(
+    ("code", "name"),
+    [
+        ("YRI", "Yoruba in Ibadan, Nigeria"),
+        ("CHB", "Han Chinese in Beijing, China"),
+        ("CEU", "Utah residents with Northern and Western European ancestry"),
+        ("JPT", "Japanese in Tokyo, Japan"),
+        ("GBR", "British in England and Scotland"),
+        ("TSI", "Toscani in Italia"),
+    ],
+)
+def test_population_names_match_1000_genomes(site, code, name):
+    assert _population_table(site.open())[code] == name
+
+
+# @spec UI-UI-060
+@pytest.mark.parametrize(("code", "shown"), [("JPT", "Japanese in Tokyo, Japan (JPT)"),
+                                              ("XYZ", "XYZ")])
+def test_rendered_population_uses_name_and_code_or_code_alone(site, code, shown):
+    site.predict_response = {"status": 200,
+                             "json": {**LIVE_RESULT, "predicted_phenotype": code}}
+    page = site.open()
+    _upload(page)
+    page.click("#run-button")
+    expect(page.locator("#result-phenotype")).to_have_text(shown)

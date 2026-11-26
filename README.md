@@ -6,13 +6,13 @@ The Genomic Ancestry Pipeline is an automated machine learning workflow that pre
 
 ---
 
-## Live Application Dashboard
+## Live Demo
 
-<a href="https://genomic-ancestry-pipeline.streamlit.app"><img src="assets/open-demo-button.svg" alt="Open Demo Dashboard"/></a>
+<a href="https://mattjtravers.github.io/genomic-ancestry-pipeline/"><img src="assets/open-demo-button.svg" alt="Open Demo"/></a>
 
-> **Note on Hosting Site:** If the application dashboard is asleep, click the presented button to wake it up. Please allow 30–60 seconds for the container to spin up.
+Pick one of the bundled samples to see its result instantly, or upload your own single-sample chromosome-15 VCF (GRCh37) and click **Run Prediction**. Each result shows the predicted ancestral population, a confidence score, and the genomic markers that contributed most to the prediction.
 
-Upload a VCF file (or pick one of the bundled samples) and click **Run Prediction** to see the predicted ancestral population with a confidence score and top contributing genomic markers.
+> **About response times:** the demo is a static page on GitHub Pages, so it loads immediately, and sample results are precomputed. Uploaded files go to the live inference API on AWS Lambda; the page warms it up as it loads, but the first prediction after a quiet period can still take a few extra seconds.
 
 ---
 
@@ -40,9 +40,9 @@ Upload a VCF file (or pick one of the bundled samples) and click **Run Predictio
 ┌───────────────────────┐
 │  AWS SAM Deployment   │ ──► Configures API Gateway and AWS Lambda environment
 └───────────┬───────────┘
-            │ (Public REST Endpoint)
+            │ (Public HTTP API: POST /predict, GET /health)
             ▼
- [Streamlit Dashboard]   ──► Renders ancestral population prediction, confidence, and top SNP markers
+ [Static Site on GitHub Pages] ──► Renders ancestral population prediction, confidence, and top SNP markers
 
 ```
 
