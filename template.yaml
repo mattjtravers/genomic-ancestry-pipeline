@@ -45,7 +45,7 @@ Resources:
         ThrottlingBurstLimit: 10
 
   # @spec DEPLOY-BE-007, DEPLOY-BE-008, DEPLOY-BE-010, DEPLOY-BE-012,
-  #       DEPLOY-BE-015, DEPLOY-BE-028
+  #       DEPLOY-BE-015, DEPLOY-BE-028, DEPLOY-BE-042
   InferenceFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -55,6 +55,14 @@ Resources:
       # 29 s: one second under API Gateway HTTP API's fixed 30 s integration
       # timeout, so the Lambda fails inside the error contract first.
       Timeout: 29
+      # Structured JSON logs at INFO, set by the Lambda runtime. The handler must
+      # not install its own handlers (see docs/llds/06_deployment.md § Logging).
+      # No LogGroup override: records go to InferenceLogGroup below.
+      # `sam local invoke` may ignore this and print plain text.
+      LoggingConfig:
+        LogFormat: JSON
+        ApplicationLogLevel: INFO
+        SystemLogLevel: INFO
       Environment:
         Variables:
           MODEL_RUN_ID: !Ref ModelRunId

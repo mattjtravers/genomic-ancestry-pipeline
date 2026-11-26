@@ -6,10 +6,13 @@ when running the CLI locally:
 - ``INFO`` and ``DEBUG`` → stdout
 - ``WARNING``, ``ERROR``, ``CRITICAL`` → stderr
 
-AWS Lambda captures both streams as CloudWatch Logs regardless of routing,
-so this configuration is intended for the launcher CLI and any other locally
-run entry points. The Lambda handler relies on Lambda's runtime handler and
-should NOT call :func:`configure_logging` at module load.
+This configuration is for the launcher CLI, the SageMaker training container,
+and other non-Lambda entry points. The Lambda handler must NOT call
+:func:`configure_logging`: the Lambda runtime already attaches a root handler
+and, under the function's ``LoggingConfig`` (JSON format, ``INFO`` level),
+writes each record as structured JSON with a ``requestId`` field. Adding
+stdout/stderr handlers there would emit every record twice, once without that
+field (``docs/llds/06_deployment.md § Logging``; DEPLOY-BE-042, DEPLOY-BE-043).
 
 See ``docs/high-level-design.md § Cross-Cutting Code Standards`` for the policy
 this module implements.

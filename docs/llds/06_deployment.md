@@ -96,8 +96,19 @@ The prediction component runs as a Lambda function:
 - **Memory**: 3008 MB (XGBoost model loading requires headroom)
 - **Timeout**: 29 seconds — one second under API Gateway HTTP API's fixed 30-second integration timeout, so a slow request handler ends in the Lambda and returns through the API rather than being cut off by the gateway. This holds only while the init phase completes in time; see § Cold start.
 - **Environment variables**: `PHENO_S3_BUCKET`, `MODEL_RUN_ID`
+- **Logging**: Lambda's built-in logging controls — JSON log format, application log level `INFO`, system log level `INFO` (§ Logging)
 
 The pipeline trains exactly one model. The Lambda handler loads the model artifact from the S3 path identified by the `MODEL_RUN_ID` environment variable, set once at deploy time. The artifact is cached in `/tmp` on cold start and reused for warm invocations. No model selection logic is needed.
+
+### Logging
+
+The function's logging is configured declaratively on the function resource (`LoggingConfig`): `LogFormat: JSON`, `ApplicationLogLevel: INFO`, `SystemLogLevel: INFO`. With these set, the Lambda runtime sets the Python root logger to `INFO` and writes every record as one JSON object carrying `timestamp`, `level`, `logger`, `message`, and `requestId` as separate fields. This is what the HLD's server-side observability standard requires: an operator can filter by request id or level in CloudWatch Logs Insights without parsing message text.
+
+Two request ids appear in an error record, and they are different values. The JSON `requestId` field is the Lambda invocation id, added by the runtime. The handler's error message text carries the API Gateway request id (`requestContext.requestId`), which API Gateway also returns to the caller in the `apigw-requestid` response header — so a user-reported failure is traced to its log line by the gateway id.
+
+The handler module installs no log handlers of its own and does not call `configure_logging()` (the stdout/stderr setup the launcher and training container use). The runtime already attaches a handler to the root logger, and Lambda captures stdout and stderr as well, so installing stream handlers would emit every record twice and lose the runtime's `requestId` field.
+
+`SystemLogLevel: INFO` keeps Lambda's own platform records, which are JSON under this format too: `platform.initReport` carries the init-phase duration and status, and `platform.report` carries each invocation's duration and, on a cold start, `initDurationMs`. These are the source for cold-start measurements (§ Cold start).
 
 ### Cold start
 
@@ -111,10 +122,10 @@ Measured on the deployed inference image (model run `20260520-3c1123`, 2026-11-2
 
 | Cold start | Init phase | First request (incl. model load) | Client-side `GET /health` |
 |---|---|---|---|
-| First after a deploy | 7.7 s | 1.1 s | 9.1 s |
+| First after a deploy | 7.7 s, or the full 10 s cap (timed out) | 1.1 s; 3.6 s when it includes the re-run init | 9.1–13.9 s |
 | Later cold starts | 1.0–1.8 s | 0.8–1.2 s | 2.2–3.5 s |
 
-The handler's Python imports take under a second; the rest of the first post-deploy init is Lambda pulling the image from ECR into a cold execution environment, which later cold starts largely skip because Lambda caches the image. That first cold start leaves about 2 seconds of margin under the 10-second init cap, so anything added to the inference image or the handler's import graph spends that margin; re-measure after any such change.
+The handler's Python imports take under a second; the rest of the first post-deploy init is Lambda pulling a newly deployed image from ECR into a cold execution environment, and how long that takes varies from deploy to deploy. When it exceeds the cap, the re-run init inside the first request is fast because the image is by then cached, so the worst observed first request is about 14 seconds end to end — inside the gateway's 30-second cutoff. Later cold starts largely skip the pull. The first post-deploy cold start therefore sits at or near the init cap, and anything added to the inference image or the handler's import graph lengthens both the pull and the re-run; re-measure after any such change.
 
 ### API routes
 
@@ -196,7 +207,7 @@ Files:
 
 Template structure (summary):
 
-- `AWS::Serverless::Function` — `PackageType: Image`, `MemorySize: 3008`, `Timeout: 29`, env vars `PHENO_S3_BUCKET` and `MODEL_RUN_ID` sourced from CloudFormation parameters
+- `AWS::Serverless::Function` — `PackageType: Image`, `MemorySize: 3008`, `Timeout: 29`, env vars `PHENO_S3_BUCKET` and `MODEL_RUN_ID` sourced from CloudFormation parameters, `LoggingConfig` with `LogFormat: JSON`, `ApplicationLogLevel: INFO`, `SystemLogLevel: INFO` (§ Logging)
 - `AWS::Serverless::HttpApi` (NOT `AWS::Serverless::Api`) — HTTP API is materially cheaper and lower-latency, and we use none of REST API's extra features. Declares `CorsConfiguration` (§ CORS) and `DefaultRouteSettings` with `ThrottlingRateLimit: 2` and `ThrottlingBurstLimit: 10` (§ Throttling)
 - Two `Event`s of type `HttpApi`: `POST /predict` and `GET /health`, both routed to the same function
 - An `AWS::IAM::Role` granting `s3:GetObject` on `s3://{PHENO_S3_BUCKET}/models/*` and CloudWatch Logs write access (matching the existing `DEPLOY-BE-012` policy shape)
@@ -239,6 +250,7 @@ Two roles:
 | Run ID format | Timestamp + UUID | Incrementing integer, git SHA | Timestamps sort naturally; UUIDs prevent collisions; git SHA would require a git context in SageMaker |
 | Inference IaC | AWS SAM | AWS CDK, Terraform, plain boto3 scripts | SAM is the industry-standard declarative tool for the Lambda + API Gateway shape; ships with `sam local invoke` for in-Docker local execution; CDK is heavier for a single function; Terraform would not gain us anything for a one-stack project |
 | Training launch interface | SageMaker Python SDK (`Estimator`) | Raw boto3 `create_training_job`, SAM/CFN `AWS::SageMaker::TrainingJob`, Step Functions | SDK is the canonical AWS-blessed way to launch training; CFN resource is rarely used in practice because training is imperative/one-shot; Step Functions adds orchestration we don't need yet |
+| Lambda logging setup | `LoggingConfig` on the function: JSON format, application and system level `INFO` | Call `configure_logging()` at module load; set the package logger to `INFO` in code; leave the runtime default | `configure_logging()` adds stdout/stderr handlers beside the runtime's own, so every record would appear twice and lose the `requestId` field. Setting the level in code works but keeps plain-text logs and puts deploy-time configuration in the handler. The runtime default level drops every `INFO` record, including the variant-coverage line inference relies on for threshold data. |
 | Inference image contents | Only the libraries inference imports (`xgboost-cpu`, NumPy, Pydantic, boto3) | Mirror the training image's dependency list; move the model load into the init phase; provisioned concurrency | Each extra library `xgboost` or the handler imports lengthens init, and init over Lambda's 10-second cap pushes the first request past the gateway's 30-second cutoff. Loading the model at init would put an S3 read inside that same 10-second cap. Provisioned concurrency removes cold starts but bills around the clock (`docs/high-level-design.md § Key Design Decisions`). The default `xgboost` wheel was rejected for inference because its GPU library and NCCL dependency serve no purpose on Lambda and dominate the image size. |
 | Container image strategy | Two separate images (`Dockerfile.train` for SageMaker, `Dockerfile.predict` for Lambda) | Single multi-purpose image with entry-point switching | Lambda requires the Lambda RIC as `ENTRYPOINT`; SageMaker requires a training `CMD`. A shared image would need runtime switching logic and would obscure both contracts; separate images keep each boundary explicit and independently deployable |
 | `run_id` ownership | Generated by the launcher before `Estimator.fit` | Generated inside the training container | Launcher needs to know the output S3 path before the job starts (for stdout contract + downstream `sam deploy` binding); container would not be able to publish `run_id` synchronously |
@@ -255,7 +267,7 @@ Two roles:
 2. ✅ Lambda chosen over SageMaker endpoint for inference (serverless, cost-effective for low-frequency demo use)
 3. ✅ Single training run; model version is fixed at deploy time via `MODEL_RUN_ID` — no model selection UI or versioning logic needed
 4. ✅ SAM owns inference IaC; SageMaker Python SDK owns training launch; the two halves are intentionally separate tools
-5. ✅ The inference image keeps the init phase under Lambda's 10-second cap and a cold `GET /health` well under the gateway's 30-second cutoff (§ Cold start)
+5. ✅ A cold `GET /health` completes well inside the gateway's 30-second cutoff: later cold starts take 2–3.5 s, and the first after a deploy at most about 14 s even when its init reaches Lambda's 10-second cap (§ Cold start)
 
 ### Deferred
 1. API Gateway authentication (API key vs Cognito) — out of scope for SDD demo; the browser client could not keep an API key secret in any case

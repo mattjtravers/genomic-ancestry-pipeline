@@ -634,7 +634,7 @@ def test_load_interrupted_by_timeout_is_not_recorded_as_failed():
 _CHILD_SCRIPT = Path(__file__).parent / "_inference_without_training_libs.py"
 
 
-# @spec DEPLOY-BE-038, DEPLOY-BE-039
+# @spec DEPLOY-BE-038, DEPLOY-BE-039, DEPLOY-BE-043
 def test_handler_module_imports_without_training_libs_and_without_aws_calls():
     """Fresh interpreter: sklearn/pandas/requests blocked, every boto3 entry point fails.
 

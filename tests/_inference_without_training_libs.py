@@ -6,8 +6,9 @@ so ``xgboost`` sees them as not installed — as in the Lambda inference image.
 
 Modes:
     import-deployment: import the Lambda handler module with every boto3 entry
-        point replaced by a function that fails, then check no model bundle
-        was loaded at import (DEPLOY-BE-038, DEPLOY-BE-039).
+        point and ``configure_logging()`` replaced by functions that fail, then
+        check no model bundle was loaded and no root-logger handler was added
+        at import (DEPLOY-BE-038, DEPLOY-BE-039, DEPLOY-BE-043).
     predict <bundle_dir>: run ``load_artifact()`` against a local bundle served
         by a fake S3 client, then ``predict()`` on ``<bundle_dir>/sample.vcf``
         (PRED-PROC-015).
@@ -42,9 +43,21 @@ def _import_deployment() -> None:
 
     boto3.client = boto3.resource = boto3.Session = _no_aws
 
+    import logging
+
+    import genomic_ancestry_pipeline.logging_config as logging_config
+
+    def _no_configure(*args, **kwargs):
+        raise AssertionError("configure_logging() called by the Lambda handler module")
+
+    logging_config.configure_logging = _no_configure
+    root_handlers_before = list(logging.getLogger().handlers)
+
     import genomic_ancestry_pipeline.deployment as deployment
 
     assert deployment._artifact_cache == {}, "model bundle loaded at import time"
+    added = [h for h in logging.getLogger().handlers if h not in root_handlers_before]
+    assert not added, f"root-logger handlers added at import: {added}"
     print("OK import-deployment")
 
 

@@ -274,3 +274,32 @@ def test_api_endpoint_output_references_the_explicit_http_api(template, http_api
     assert f"${{{api_name}}}" in value, (
         f"ApiEndpoint output must reference {api_name}, not the implicit ServerlessHttpApi"
     )
+
+
+# ── Lambda logging configuration — DEPLOY-BE-042 ──────────────────────────────
+
+
+def _inference_function(resources) -> dict:
+    return next(iter(_resources_of_type(resources, "AWS::Serverless::Function").values()))
+
+
+# @spec DEPLOY-BE-042
+def test_lambda_logging_config_is_json_at_info(resources):
+    cfg = _inference_function(resources).get("Properties", {}).get("LoggingConfig") or {}
+    assert cfg.get("LogFormat") == "JSON"
+    assert cfg.get("ApplicationLogLevel") == "INFO"
+    assert cfg.get("SystemLogLevel") == "INFO"
+    assert "LogGroup" not in cfg, (
+        "LoggingConfig must not override LogGroup; records go to the declared log group"
+    )
+
+
+# @spec DEPLOY-BE-042, DEPLOY-BE-020
+def test_declared_log_group_is_the_functions_default_group(resources):
+    """With no LogGroup override, Lambda writes to /aws/lambda/<FunctionName>."""
+    fn_name = _inference_function(resources).get("Properties", {}).get("FunctionName")
+    log_groups = _resources_of_type(resources, "AWS::Logs::LogGroup")
+    names = [lg.get("Properties", {}).get("LogGroupName") for lg in log_groups.values()]
+    assert f"/aws/lambda/{fn_name}" in names, (
+        f"declared log group(s) {names} must match the function's default /aws/lambda/{fn_name}"
+    )

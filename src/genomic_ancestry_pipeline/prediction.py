@@ -39,7 +39,13 @@ logger = logging.getLogger(__name__)
 
 
 class PredictionError(Exception):
-    """Raised when the inference input is malformed or output validation fails."""
+    """Raised when the input VCF cannot be used for a prediction — the client's fault.
+
+    Covers a VCF with no sample columns, with more than one sample, or with no
+    readable genotype for any registry variant. Callers map it to a client error
+    (the Lambda returns ``400 INVALID_VCF``); every other exception from
+    :func:`predict` is a server-side fault.
+    """
 
 
 class ModelOutputError(Exception):
@@ -51,9 +57,21 @@ class ModelOutputError(Exception):
     """
 
 
-_DOSAGE = {"0|0": 0, "0|1": 1, "1|0": 1, "1|1": 2}
+# Alternate-allele dosage. Phase is irrelevant to the model, so phased (|) and
+# unphased (/) calls map identically; anything else (./., 0|2, haploid) is
+# treated as missing and imputed.
+_DOSAGE = {
+    "0|0": 0, "0|1": 1, "1|0": 1, "1|1": 2,
+    "0/0": 0, "0/1": 1, "1/0": 1, "1/1": 2,
+}
 
 
+def _normalize_chrom(chrom: str) -> str:
+    """Strip a leading ``chr`` (any case): the FeatureRegistry uses bare names like ``15``."""
+    return chrom[3:] if chrom[:3].lower() == "chr" else chrom
+
+
+# @spec PRED-PROC-012, PRED-PROC-018, PRED-PROC-020, PRED-PROC-022
 def _parse_single_sample_vcf(vcf_bytes: bytes) -> tuple[str, dict[str, int]]:
     """Parse a single-sample VCF; raise PredictionError if multi-sample.
 
@@ -99,7 +117,7 @@ def _parse_single_sample_vcf(vcf_bytes: bytes) -> tuple[str, dict[str, int]]:
         if len(cols) < 10:
             continue
         chrom, pos, _id, ref, alt = cols[:5]
-        variant_id = f"{chrom}_{pos}_{ref}_{alt}"
+        variant_id = f"{_normalize_chrom(chrom)}_{pos}_{ref}_{alt}"
         gt_field = cols[9].split(":")[0]
         if gt_field in _DOSAGE:
             genotypes[variant_id] = _DOSAGE[gt_field]
@@ -141,7 +159,7 @@ def _build_feature_vector(
 # @spec PRED-PROC-001, PRED-PROC-002, PRED-PROC-003, PRED-PROC-004, PRED-PROC-005,
 #       PRED-PROC-006, PRED-PROC-007, PRED-PROC-008, PRED-PROC-009, PRED-PROC-010,
 #       PRED-PROC-012, PRED-PROC-013, PRED-PROC-015, PRED-PROC-016, PRED-PROC-017,
-#       PRED-DATA-001, PRED-DATA-002
+#       PRED-PROC-018, PRED-PROC-019, PRED-PROC-021, PRED-DATA-001, PRED-DATA-002
 def predict(
     vcf_bytes: bytes,
     artifact: dict,
@@ -170,7 +188,8 @@ def predict(
         ``model_artifact_version``.
 
     Raises:
-        PredictionError: If the VCF contains zero or multiple samples.
+        PredictionError: If the VCF contains zero or multiple samples, or no
+            registry variant has a readable genotype in it.
         TypeError: If ``artifact["booster"]`` is not an :class:`xgboost.Booster`.
         ModelOutputError: If the Booster's probability output is not a single
             row with one value per label-encoder class.
@@ -190,6 +209,25 @@ def predict(
     label_encoder: dict[int, str] = artifact["label_encoder"]
 
     sample_id, sample_genotypes = _parse_single_sample_vcf(vcf_bytes)
+
+    n_registry = len(registry.features)
+    n_present = sum(1 for e in registry.features if e.variant_id in sample_genotypes)
+    logger.info(
+        "predict variant coverage [present=%d total=%d sample_id=%s]",
+        n_present, n_registry, sample_id,
+    )
+    if n_present == 0:
+        # A vector built entirely from training medians says nothing about this
+        # sample; refuse rather than return a confident-looking prediction.
+        logger.error(
+            "predict input rejected [sample_id=%s]: no registry variant has a readable genotype",
+            sample_id,
+        )
+        raise PredictionError(
+            f"None of the model's {n_registry} variants has a readable genotype in this VCF "
+            "(check chromosome naming, reference build GRCh37, and genotype format)."
+        )
+
     X = _build_feature_vector(sample_genotypes, registry, medians)
 
     dmatrix = xgb.DMatrix(X)

@@ -36,7 +36,7 @@ from pydantic import ValidationError
 # @spec DEPLOY-BE-038, DEPLOY-BE-039 — this module's import graph must stay free of
 # scikit-learn, pandas, and requests, and importing it must not touch S3: the
 # Lambda init phase is capped at 10 s (docs/llds/06_deployment.md § Cold start).
-from genomic_ancestry_pipeline.prediction import load_artifact, predict
+from genomic_ancestry_pipeline.prediction import PredictionError, load_artifact, predict
 
 # @spec DEPLOY-BE-019 — region pin; do not rely on AWS_DEFAULT_REGION.
 REGION = "us-east-1"
@@ -404,8 +404,9 @@ def _route(event: dict[str, Any]) -> tuple[str, str]:
     return method, path
 
 
-# @spec DEPLOY-BE-007, DEPLOY-BE-008, DEPLOY-BE-009, DEPLOY-BE-010, DEPLOY-BE-013,
-#       DEPLOY-BE-021, DEPLOY-BE-022, DEPLOY-BE-029, DEPLOY-BE-035, DEPLOY-BE-037
+# @spec DEPLOY-BE-007, DEPLOY-BE-008, DEPLOY-BE-009, DEPLOY-BE-010,
+#       DEPLOY-BE-021, DEPLOY-BE-022, DEPLOY-BE-029, DEPLOY-BE-035, DEPLOY-BE-037,
+#       DEPLOY-BE-040, DEPLOY-BE-041
 def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
     """AWS Lambda entry point for the inference API.
 
@@ -475,20 +476,19 @@ def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
                     artifact=_artifact_cache,
                     model_artifact_version=os.environ.get("MODEL_RUN_ID", ""),
                 )
+            except PredictionError as e:
+                # The only signal of bad client input (DEPLOY-BE-040). Mapping is by
+                # exception class, never by type resemblance: a stray ValueError
+                # from NumPy is a server fault and falls through to the 500 below.
+                return _error_response(400, "INVALID_VCF", str(e), request_id)
             except ValidationError as e:
                 # PredictionResult Pydantic validation (PRED-PROC-010) → 500 INFERENCE_FAILED.
-                # ValidationError is a ValueError subclass, so this clause must come first;
-                # otherwise the broader ValueError handler below would catch it as INVALID_VCF.
                 return _error_response(
                     500, "INFERENCE_FAILED",
                     f"PredictionResult validation failed: {e}",
                     request_id,
                 )
-            except ValueError as e:
-                # Plain ValueError from predict() → bad input (multi-sample VCF,
-                # malformed VCF, no usable variants) per the error-contract table.
-                return _error_response(400, "INVALID_VCF", str(e), request_id)
-            except Exception as e:  # noqa: BLE001 — predict-path failures map to INFERENCE_FAILED
+            except Exception as e:  # noqa: BLE001 — everything else is a server fault (DEPLOY-BE-041)
                 return _error_response(500, "INFERENCE_FAILED", str(e), request_id)
 
             payload = result.model_dump() if hasattr(result, "model_dump") else dict(result)
