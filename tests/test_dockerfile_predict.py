@@ -25,13 +25,13 @@ def _pip_install_packages() -> list[str]:
     return names
 
 
-# @spec DEPLOY-BE-023
+# @spec DEPLOY-BE-023, DEPLOY-BE-007
 def test_dockerfile_predict_uses_lambda_python_312_base():
     assert re.search(
         r"^FROM\s+public\.ecr\.aws/lambda/python:3\.12\b", DOCKERFILE.read_text(), re.M
     )
 
 
-# @spec DEPLOY-BE-023
+# @spec DEPLOY-BE-023, DEPLOY-BE-007
 def test_dockerfile_predict_installs_exactly_the_inference_dependencies():
     assert sorted(_pip_install_packages()) == ["boto3", "numpy", "pydantic", "xgboost-cpu"]

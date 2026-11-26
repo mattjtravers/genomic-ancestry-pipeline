@@ -678,3 +678,19 @@ def test_lambda_returns_500_inference_failed_when_booster_output_shape_is_wrong(
         response = lambda_handler(event, context=None)
     assert response["statusCode"] == 500
     assert _body(response).get("error") == "INFERENCE_FAILED"
+
+
+# ── model_artifact_version is the bundle prefix — DEPLOY-BE-047 / PRED-PROC-002 ─
+
+
+# @spec DEPLOY-BE-047, PRED-PROC-002
+def test_lambda_passes_bundle_prefix_as_model_artifact_version(monkeypatch):
+    monkeypatch.setenv("MODEL_RUN_ID", "20260520-3c1123")
+    event = _http_api_event("POST", "/predict", body=json.dumps({"vcf": "##fileformat=VCFv4.1\n"}))
+    with patch("genomic_ancestry_pipeline.deployment.load_artifact",
+               return_value=_valid_artifact()), \
+         patch("genomic_ancestry_pipeline.deployment.predict",
+               return_value=MagicMock(model_dump=lambda: {})) as mock_predict, \
+         patch.dict("genomic_ancestry_pipeline.deployment._artifact_cache", clear=True):
+        assert lambda_handler(event, context=None)["statusCode"] == 200
+    assert mock_predict.call_args.kwargs["model_artifact_version"] == "models/20260520-3c1123/"

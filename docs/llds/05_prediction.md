@@ -34,7 +34,7 @@ def predict(
 ) -> PredictionResult:
 ```
 
-The caller supplies a pre-loaded artifact bundle (the dict returned by `load_artifact()`). This separates artifact loading from inference, allowing the Lambda to reuse its warm cache across requests without hitting S3 on every call. The `model_artifact_version` string is recorded verbatim in `PredictionResult` for traceability; the Lambda passes `os.environ["MODEL_RUN_ID"]`.
+The caller supplies a pre-loaded artifact bundle (the dict returned by `load_artifact()`). This separates artifact loading from inference, allowing the Lambda to reuse its warm cache across requests without hitting S3 on every call. The `model_artifact_version` string is recorded verbatim in `PredictionResult` for traceability; the Lambda passes the bundle prefix built from its `MODEL_RUN_ID` environment variable, `models/{MODEL_RUN_ID}/` (see § Artifact Version Identity).
 
 ## Model Handle
 

@@ -59,7 +59,7 @@ def test_template_parses_as_sam_transform(template):
     ), "template.yaml must declare the AWS::Serverless transform"
 
 
-# @spec DEPLOY-BE-014, DEPLOY-BE-008
+# @spec DEPLOY-BE-014, DEPLOY-BE-008, DEPLOY-BE-007
 def test_template_declares_inference_lambda_function(resources):
     fns = _resources_of_type(resources, "AWS::Serverless::Function")
     assert fns, "template.yaml must declare at least one AWS::Serverless::Function"
@@ -69,6 +69,9 @@ def test_template_declares_inference_lambda_function(resources):
     assert props.get("MemorySize") == 3008
     assert props.get("Timeout") == 29, (
         "Lambda timeout must be 29 s, under API Gateway HTTP API's 30 s integration cutoff"
+    )
+    assert fn.get("Metadata", {}).get("Dockerfile") == "Dockerfile.predict", (
+        "Inference image must be built from Dockerfile.predict"
     )
 
 

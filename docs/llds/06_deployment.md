@@ -136,7 +136,7 @@ The Lambda is fronted by an **API Gateway HTTP API** (not REST API) — HTTP API
 | `POST` | `/predict` | Runs inference on a single-sample VCF; returns a `PredictionResult` JSON body |
 | `GET` | `/health` | Loads the model bundle if not already cached; reports whether the model is ready |
 
-The `/predict` endpoint accepts a JSON body of shape `{"vcf": "<vcf_string>"}` where `vcf` is the raw VCF content as a UTF-8 string. It passes the pre-cached artifact bundle directly to `predict()` — no S3 read occurs per-request. The `phenotype` field is not part of the request contract; the model determines the ancestral population from the VCF data alone.
+The `/predict` endpoint accepts a JSON body of shape `{"vcf": "<vcf_string>"}` where `vcf` is the raw VCF content as a UTF-8 string. It passes the pre-cached artifact bundle directly to `predict()` — no S3 read occurs per-request — together with `model_artifact_version="models/{MODEL_RUN_ID}/"`, the bundle prefix the artifact was loaded from, so every response names its model in the form `docs/llds/05_prediction.md § Artifact Version Identity` defines. The `phenotype` field is not part of the request contract; the model determines the ancestral population from the VCF data alone.
 
 The `/health` endpoint takes no request body. It runs the same model-bundle load as the first `/predict` call — the cold-start load into `/tmp`, including the completeness check below — so a container that has answered `/health` serves its next `/predict` warm. On success it returns `200` with body `{"status": "ok"}`. If the bundle cannot be loaded it returns the same `503 MODEL_UNAVAILABLE` as `/predict` would. The browser client calls it once per page load as a warm-up and ignores the response (`docs/llds/07_ui.md § Warm-up`); it is also a convenient post-deploy smoke check.
 
@@ -221,6 +221,8 @@ Workflow:
 | `sam build` | Builds the Lambda container image |
 | `sam deploy` | Pushes image to ECR + deploys/updates the CloudFormation stack |
 | `sam local invoke` / `sam local start-api` | Runs the Lambda locally inside Docker — useful for smoke-testing the handler against a real model artifact in S3 (requires AWS credentials and a valid `MODEL_RUN_ID`) |
+
+**Post-deploy warm-up.** `bin/04_deploy.sh` wraps `sam build` and `sam deploy`. Once `sam deploy` succeeds and the stack's `ApiEndpoint` output is read, the script sends one `GET {ApiEndpoint}/health` (client timeout 35 seconds) and prints the HTTP status and elapsed time. The first cold start after a deploy is the slowest one a visitor could hit (§ Cold start); this call makes the operator pay it instead, and doubles as a smoke check: if the response is not `200`, the script exits non-zero so a broken deploy is noticed at deploy time. If `sam deploy` fails, the script stops before the warm-up.
 
 **Binding a model to the deployment.** `MODEL_RUN_ID` is a CloudFormation *parameter* of the SAM stack, not an output of the training job. After a SageMaker training run completes successfully, the operator (or a CI step) runs `sam deploy --parameter-overrides MODEL_RUN_ID=<run_id>` to bind the inference Lambda to the new artifact. This keeps SAM as the single source of truth for *what's deployed* without coupling the deploy lifecycle to the training lifecycle.
 

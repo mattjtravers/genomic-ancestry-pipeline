@@ -406,7 +406,7 @@ def _route(event: dict[str, Any]) -> tuple[str, str]:
 
 # @spec DEPLOY-BE-007, DEPLOY-BE-008, DEPLOY-BE-009, DEPLOY-BE-010,
 #       DEPLOY-BE-021, DEPLOY-BE-022, DEPLOY-BE-029, DEPLOY-BE-035, DEPLOY-BE-037,
-#       DEPLOY-BE-040, DEPLOY-BE-041
+#       DEPLOY-BE-040, DEPLOY-BE-041, DEPLOY-BE-047
 def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
     """AWS Lambda entry point for the inference API.
 
@@ -474,7 +474,8 @@ def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
                 result = predict(
                     vcf_bytes=vcf_bytes,
                     artifact=_artifact_cache,
-                    model_artifact_version=os.environ.get("MODEL_RUN_ID", ""),
+                    # Bundle prefix, not the bare run id (DEPLOY-BE-047, PRED-PROC-002).
+                    model_artifact_version=f"models/{os.environ.get('MODEL_RUN_ID', '')}/",
                 )
             except PredictionError as e:
                 # The only signal of bad client input (DEPLOY-BE-040). Mapping is by

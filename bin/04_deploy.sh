@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Builds the Lambda container image and deploys the SAM stack.
 # sam deploy will prompt for confirmation before creating resources.
-# On success, prints an export statement for PHENO_API_ENDPOINT — run it before 05_ui.sh.
+# On success, warms the Lambda with one GET /health (exiting non-zero unless it
+# returns 200), then prints an export statement for PHENO_API_ENDPOINT.
+# @spec DEPLOY-BE-044, DEPLOY-BE-045, DEPLOY-BE-046
 set -euo pipefail
 
 : "${RUN_ID:?Set RUN_ID before running this script (see 03_train.sh output)}"
@@ -38,6 +40,20 @@ ENDPOINT=$(aws cloudformation describe-stacks \
     --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
     --output text \
     --no-cli-pager)
+
+# The first cold start after a deploy is the slowest a visitor could hit
+# (docs/llds/06_deployment.md § Cold start). Pay it here, and treat a non-200
+# as a broken deploy. 35 s outlasts API Gateway's 30 s integration timeout.
+echo ""
+echo "Warming the Lambda: GET ${ENDPOINT}/health"
+HEALTH=$(curl -s -o /dev/null -w '%{http_code} %{time_total}' --max-time 35 "${ENDPOINT}/health" || true)
+HEALTH_STATUS=${HEALTH%% *}
+HEALTH_TIME=${HEALTH#* }
+echo "  /health -> HTTP ${HEALTH_STATUS:-000} in ${HEALTH_TIME:-?}s"
+if [[ "${HEALTH_STATUS}" != "200" ]]; then
+    echo "ERROR: post-deploy GET /health did not return 200; check the function's CloudWatch logs." >&2
+    exit 1
+fi
 
 echo ""
 echo "Deployment complete. Run the following before 05_ui.sh:"

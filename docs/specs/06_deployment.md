@@ -25,11 +25,12 @@
 
 ## Lambda Inference
 
-- [ ] **DEPLOY-BE-007**: The inference Lambda function shall use a container image runtime with Python 3.12, including XGBoost and all pipeline dependencies.
+- [x] **DEPLOY-BE-007**: The inference Lambda function shall run as a container image (`PackageType: Image`) built from `Dockerfile.predict` on the AWS Lambda Python 3.12 base, containing only the libraries inference imports, with XGBoost supplied by the CPU-only `xgboost-cpu` package (exact contents per `DEPLOY-BE-023`).
 - [x] **DEPLOY-BE-008**: The Lambda function shall be allocated 3008 MB memory and a 29-second timeout.
 - [x] **DEPLOY-BE-009**: The Lambda function shall cache the model artifact bundle in `/tmp` after the first load, and reuse the cached bundle on subsequent warm invocations within the same container lifecycle.
 - [x] **DEPLOY-BE-010**: The Lambda function shall accept invocation via an API Gateway HTTP API endpoint.
 - [x] **DEPLOY-BE-027**: The `POST /predict` Lambda route shall accept a JSON request body of shape `{"vcf": "<vcf_string>"}` where `vcf` is the raw VCF content as a UTF-8 string; no `phenotype` field is accepted or required — the model determines the ancestral population from the VCF data alone.
+- [x] **DEPLOY-BE-047**: When the Lambda handles a `POST /predict` request, it shall pass `model_artifact_version` to `predict()` as `models/{MODEL_RUN_ID}/`, built from the `MODEL_RUN_ID` environment variable.
 - [x] **DEPLOY-BE-028**: The HTTP API shall expose a `GET /health` route integrated with the same Lambda function as `POST /predict`.
 - [x] **DEPLOY-BE-029**: When the Lambda receives a `GET /health` request, it shall load the model artifact bundle through the same cached load path used by `POST /predict` (loading it into `/tmp` if not already cached) and, if the load succeeds, return HTTP 200 with body `{"status": "ok"}`.
 
@@ -55,6 +56,9 @@
 
 - [x] **DEPLOY-BE-014**: The inference Lambda, its HTTP API routes, its execution role, and its CloudWatch log group shall be declared in a SAM template at the repo root and deployable end-to-end via `sam build && sam deploy`.
 - [x] **DEPLOY-BE-015**: The SAM template shall expose `MODEL_RUN_ID` and `PHENO_S3_BUCKET` as CloudFormation stack parameters, surfaced to the Lambda as environment variables of the same name.
+- [x] **DEPLOY-BE-044**: When `sam deploy` in `bin/04_deploy.sh` succeeds, the script shall send one `GET {ApiEndpoint}/health` request with a 35-second client timeout and print the HTTP status and elapsed time.
+- [x] **DEPLOY-BE-045**: If the post-deploy `GET /health` in `bin/04_deploy.sh` does not return HTTP 200, then the script shall exit non-zero.
+- [x] **DEPLOY-BE-046**: If `sam deploy` in `bin/04_deploy.sh` fails, then the script shall exit non-zero without sending the post-deploy `GET /health` request.
 - [x] **DEPLOY-BE-020**: The SAM template shall declare an `AWS::Logs::LogGroup` for the inference Lambda with `RetentionInDays: 14`.
 - [x] **DEPLOY-BE-042**: The SAM template shall set the inference Lambda's `LoggingConfig` to `LogFormat: JSON`, `ApplicationLogLevel: INFO`, and `SystemLogLevel: INFO`, with no `LogGroup` override, so records go to the log group declared per `DEPLOY-BE-020`.
 
