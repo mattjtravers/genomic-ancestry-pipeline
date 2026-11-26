@@ -1,6 +1,7 @@
 """Tests for the preprocessing component — PREP-* specs."""
 from __future__ import annotations
 
+import numpy as np
 import pytest
 from pydantic import ValidationError
 
@@ -126,8 +127,6 @@ def test_missingness_filter_runs_before_imputation(sample_metadata):
 # @spec PREP-PROC-004
 def test_imputation_medians_computed_from_training_split_only(sample_metadata):
     """Imputation medians reflect training-split values, not full-data medians."""
-    # Variant: training samples all have dosage 0; test samples all have dosage 2.
-    # Training-only median = 0. Full-data median = 1.
     samples = [f"s{i:02d}" for i in range(1, 11)]
     labels = {
         s: ("CEU" if i < 5 else ("CHB" if i < 9 else "YRI"))
@@ -135,21 +134,27 @@ def test_imputation_medians_computed_from_training_split_only(sample_metadata):
     }
     meta = SampleMetadata(population=labels, phenotype_labels=labels)
 
-    # variant_id will be "15_100_A_G"
-    # training split (first 8) → genotype "0|0" (dosage 0)
-    # test split (last 2) → genotype "1|1" (dosage 2)
-    genotypes = {s: "0|0" for s in samples}
-    genotypes["s09"] = "1|1"
-    genotypes["s10"] = "1|1"
+    def _dataset(genotypes: dict[str, str]) -> RawSnpDataset:
+        variant = RawVariant(chrom="15", pos=100, ref="A", alt="G", genotypes=genotypes)
+        return RawSnpDataset(samples=samples, variants=[variant], metadata=meta)
 
-    variant = RawVariant(chrom="15", pos=100, ref="A", alt="G", genotypes=genotypes)
-    dataset = RawSnpDataset(samples=samples, variants=[variant], metadata=meta)
+    # The seeded split depends only on labels, so a probe run reveals the assignment.
+    splits = preprocess(_dataset({s: "0|0" for s in samples}), random_state=0).sample_splits
+    train = sorted(s for s in samples if splits[s] == "train")
+    test = [s for s in samples if splits[s] == "test"]
+    assert len(train) % 2 == 0 and test
 
-    result = preprocess(dataset, random_state=0)
+    # Training split: half dosage 0, half dosage 2 → median 1.0.
+    # Test split: all dosage 2 → the all-sample median would be 2.0.
+    genotypes = {s: ("0|0" if k < len(train) // 2 else "1|1") for k, s in enumerate(train)}
+    genotypes.update({s: "1|1" for s in test})
+    all_sample_median = float(np.median([0 if g == "0|0" else 2 for g in genotypes.values()]))
+    assert all_sample_median != 1.0, "fixture must distinguish train-only from all-sample median"
 
-    vid = "15_100_A_G"
-    # All training samples should have dosage 0 → median = 0
-    assert result.imputation_medians[vid] == 0.0
+    result = preprocess(_dataset(genotypes), random_state=0)
+
+    assert result.sample_splits == splits
+    assert result.imputation_medians["15_100_A_G"] == 1.0
 
 
 # @spec PREP-PROC-005

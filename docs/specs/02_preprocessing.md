@@ -14,7 +14,7 @@
 
 ## Imputation
 
-- [ ] **PREP-PROC-004**: The system shall compute per-variant median genotype values using training-split samples only, after the missingness filter has been applied.
+- [x] **PREP-PROC-004**: The system shall compute per-variant median genotype values using training-split samples only, after the missingness filter has been applied.
 - [x] **PREP-PROC-005**: The system shall impute missing genotype values (VCF `./.` encoding) using the per-variant median computed from the training split.
 - [x] **PREP-DATA-002**: The `CleanSnpDataset` shall include an `imputation_medians` mapping of variant ID to the median value used, for use at inference time.
 
