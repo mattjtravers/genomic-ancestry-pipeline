@@ -47,7 +47,7 @@ The pipeline uses two distinct container images — one for SageMaker training, 
 
 **Training image** (`Dockerfile.train`): installs runtime ML dependencies (XGBoost, scikit-learn, pandas, NumPy, Pydantic, boto3), copies `src/genomic_ancestry_pipeline/` to `/opt/ml/code/genomic_ancestry_pipeline/`, and sets `PYTHONPATH=/opt/ml/code`. Built and pushed to the ECR repository `phenotype-pipeline-training` by `bin/03_train.sh`; the resulting URI is exported as `PHENO_TRAINING_IMAGE_URI` for the training launcher.
 
-**Inference image** (`Dockerfile.predict`): built from the AWS Lambda Python 3.12 base, which bundles the Lambda Runtime Interface Client as `ENTRYPOINT`. Copies `src/genomic_ancestry_pipeline/` to `${LAMBDA_TASK_ROOT}`. Does not include `sagemaker` or `streamlit` (training and UI dependencies not needed at inference time). Published automatically by `sam build && sam deploy`.
+**Inference image** (`Dockerfile.predict`): built from the AWS Lambda Python 3.12 base, which bundles the Lambda Runtime Interface Client as `ENTRYPOINT`. Copies `src/genomic_ancestry_pipeline/` to `${LAMBDA_TASK_ROOT}`. Does not include `sagemaker` (a training dependency not needed at inference time). Published automatically by `sam build && sam deploy`.
 
 The two images are kept separate because Lambda requires the Lambda RIC as `ENTRYPOINT` and SageMaker requires a training script as `CMD`; combining them into one image would require entry-point switching logic and obscure both contracts.
 
@@ -94,7 +94,7 @@ The prediction component runs as a Lambda function:
 - **Runtime**: Python 3.12 (container image Lambda to include XGBoost)
 - **Trigger**: API Gateway **HTTP API** endpoint (REST API is rejected — see § API routes)
 - **Memory**: 3008 MB (XGBoost model loading requires headroom)
-- **Timeout**: 60 seconds
+- **Timeout**: 29 seconds — one second under API Gateway HTTP API's fixed 30-second integration timeout, so a slow invocation ends in the Lambda and returns through the API rather than being cut off by the gateway
 - **Environment variables**: `PHENO_S3_BUCKET`, `MODEL_RUN_ID`
 
 The pipeline trains exactly one model. The Lambda handler loads the model artifact from the S3 path identified by the `MODEL_RUN_ID` environment variable, set once at deploy time. The artifact is cached in `/tmp` on cold start and reused for warm invocations. No model selection logic is needed.
@@ -106,8 +106,38 @@ The Lambda is fronted by an **API Gateway HTTP API** (not REST API) — HTTP API
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/predict` | Runs inference on a single-sample VCF; returns a `PredictionResult` JSON body |
+| `GET` | `/health` | Loads the model bundle if not already cached; reports whether the model is ready |
 
 The `/predict` endpoint accepts a JSON body of shape `{"vcf": "<vcf_string>"}` where `vcf` is the raw VCF content as a UTF-8 string. It passes the pre-cached artifact bundle directly to `predict()` — no S3 read occurs per-request. The `phenotype` field is not part of the request contract; the model determines the ancestral population from the VCF data alone.
+
+The `/health` endpoint takes no request body. It runs the same model-bundle load as the first `/predict` call — the cold-start load into `/tmp`, including the completeness check below — so a container that has answered `/health` serves its next `/predict` warm. On success it returns `200` with body `{"status": "ok"}`. If the bundle cannot be loaded it returns the same `503 MODEL_UNAVAILABLE` as `/predict` would. The browser client calls it once per page load as a warm-up and ignores the response (`docs/llds/07_ui.md § Warm-up`); it is also a convenient post-deploy smoke check.
+
+### CORS
+
+The UI is a static site on GitHub Pages whose JavaScript calls the API directly, so the HTTP API declares a CORS configuration:
+
+| Setting | Value |
+|---|---|
+| Allowed origins | `https://mattjtravers.github.io` and `http://localhost:8000` — exactly these two |
+| Allowed methods | `POST`, `GET` |
+| Allowed headers | `Content-Type` |
+| Credentials | Not allowed |
+| Preflight cache (`MaxAge`) | 600 seconds |
+
+The browser sends an `OPTIONS` preflight before each `POST /predict` because of its `Content-Type: application/json` header. API Gateway answers the preflight itself from this configuration; preflights never reach the Lambda. API Gateway also adds the CORS response headers to the Lambda's responses, so the handler does not set them.
+
+An origin is scheme, host, and port only, so `https://mattjtravers.github.io` covers the project site at `https://mattjtravers.github.io/genomic-ancestry-pipeline/`. `http://localhost:8000` is the local preview served by `bin/05_ui.sh` (`python -m http.server 8000`); any other local port is rejected. CORS is enforced by browsers, not by the API: it stops other web pages from calling the API from a visitor's browser, but a script or `curl` can still call it. Cost protection comes from throttling, not CORS.
+
+### Throttling
+
+The API is public and unauthenticated, and every `/predict` call runs a 3008 MB Lambda. To cap cost exposure, the HTTP API's default stage sets route-level throttling for all routes:
+
+| Setting | Value |
+|---|---|
+| Steady-state rate limit | 2 requests per second |
+| Burst limit | 10 requests |
+
+Requests above the limit are rejected by API Gateway with `429 Too Many Requests` before they reach the Lambda, so a rejected request costs nothing in Lambda time. The `429` body is API Gateway's own, not the error contract's `{"error", "detail"}` shape; the UI maps the status code (`docs/llds/07_ui.md § Error Handling`). These limits are far above real demo traffic and bound the worst-case Lambda spend from a runaway client or a deliberate flood. Each page load's `GET /health` warm-up counts against the same limits; the burst of 10 leaves room for several visitors arriving together, and a warm-up that is throttled is harmless because the client ignores its result. A real prediction can still be throttled when many visitors arrive in the same second; that risk is accepted for a demo.
 
 ### Error contract
 
@@ -115,7 +145,7 @@ The handler fails immediately and loudly on any error. There is no retry, no deg
 
 | Condition | HTTP status | `error` code |
 |---|---|---|
-| Model artifact at `s3://{bucket}/models/{MODEL_RUN_ID}/` is missing, incomplete (any of the bundled files absent), or unreadable on cold-start load | `503` | `MODEL_UNAVAILABLE` |
+| Model artifact at `s3://{bucket}/models/{MODEL_RUN_ID}/` is missing, incomplete (any of the bundled files absent), or unreadable on cold-start load (any route) | `503` | `MODEL_UNAVAILABLE` |
 | `/predict` request body is not valid JSON, missing required fields, or fails Pydantic validation | `400` | `INVALID_INPUT` |
 | `/predict` VCF parsing fails (malformed VCF, no usable variants for the model's feature set) | `400` | `INVALID_VCF` |
 | `/predict` VCF contains more than one sample (per `PRED-PROC-012`) | `400` | `INVALID_VCF` |
@@ -123,7 +153,7 @@ The handler fails immediately and loudly on any error. There is no retry, no deg
 | Model inference or SHAP computation raises | `500` | `INFERENCE_FAILED` |
 | Any other unhandled exception | `500` | `INTERNAL_ERROR` |
 
-Model-bundle completeness is checked on the first load (cold start or first `/predict` call): all of `model.json`, `feature_registry.json`, `imputation_medians.json`, `evaluation_report.json`, `label_encoder.json` must be present. If any are missing, the handler raises and every subsequent request in that container lifecycle short-circuits to `503 MODEL_UNAVAILABLE` without re-attempting the load.
+Model-bundle completeness is checked on the first load (cold start, on the first `/predict` or `/health` call): all of `model.json`, `feature_registry.json`, `imputation_medians.json`, `evaluation_report.json`, `label_encoder.json` must be present. If any are missing, the handler raises and every subsequent request in that container lifecycle short-circuits to `503 MODEL_UNAVAILABLE` without re-attempting the load. A load cut short by the 29-second invocation timeout is not a failed load: it is not recorded as failed, and the next request re-attempts it.
 
 ### Infrastructure-as-Code (AWS SAM)
 
@@ -138,9 +168,9 @@ Files:
 
 Template structure (summary):
 
-- `AWS::Serverless::Function` — `PackageType: Image`, `MemorySize: 3008`, `Timeout: 60`, env vars `PHENO_S3_BUCKET` and `MODEL_RUN_ID` sourced from CloudFormation parameters
-- `AWS::Serverless::HttpApi` (NOT `AWS::Serverless::Api`) — HTTP API is materially cheaper and lower-latency, and we use none of REST API's extra features
-- One `Event` of type `HttpApi`: `POST /predict`
+- `AWS::Serverless::Function` — `PackageType: Image`, `MemorySize: 3008`, `Timeout: 29`, env vars `PHENO_S3_BUCKET` and `MODEL_RUN_ID` sourced from CloudFormation parameters
+- `AWS::Serverless::HttpApi` (NOT `AWS::Serverless::Api`) — HTTP API is materially cheaper and lower-latency, and we use none of REST API's extra features. Declares `CorsConfiguration` (§ CORS) and `DefaultRouteSettings` with `ThrottlingRateLimit: 2` and `ThrottlingBurstLimit: 10` (§ Throttling)
+- Two `Event`s of type `HttpApi`: `POST /predict` and `GET /health`, both routed to the same function
 - An `AWS::IAM::Role` granting `s3:GetObject` on `s3://{PHENO_S3_BUCKET}/models/*` and CloudWatch Logs write access (matching the existing `DEPLOY-BE-012` policy shape)
 - An `AWS::Logs::LogGroup` for the Lambda with `RetentionInDays: 14` — default ("never expire") is a silent cost trap; 14 days is plenty for a demo's forensic window
 
@@ -183,6 +213,10 @@ Two roles:
 | Training launch interface | SageMaker Python SDK (`Estimator`) | Raw boto3 `create_training_job`, SAM/CFN `AWS::SageMaker::TrainingJob`, Step Functions | SDK is the canonical AWS-blessed way to launch training; CFN resource is rarely used in practice because training is imperative/one-shot; Step Functions adds orchestration we don't need yet |
 | Container image strategy | Two separate images (`Dockerfile.train` for SageMaker, `Dockerfile.predict` for Lambda) | Single multi-purpose image with entry-point switching | Lambda requires the Lambda RIC as `ENTRYPOINT`; SageMaker requires a training `CMD`. A shared image would need runtime switching logic and would obscure both contracts; separate images keep each boundary explicit and independently deployable |
 | `run_id` ownership | Generated by the launcher before `Estimator.fit` | Generated inside the training container | Launcher needs to know the output S3 path before the job starts (for stdout contract + downstream `sam deploy` binding); container would not be able to publish `run_id` synchronously |
+| Browser access | HTTP API `CorsConfiguration` allowing only `https://mattjtravers.github.io` and `http://localhost:8000` | Allow `*`; allow any localhost port; set CORS headers in the Lambda handler; proxy through a backend | A wildcard would let any web page spend the API's budget from visitors' browsers. One fixed local port is enough for the local preview; allowing any localhost port widens the list for no need. Handler-set headers would require the Lambda to answer `OPTIONS` preflights, paying a Lambda invocation per preflight. A proxy reintroduces a server to host. |
+| Warm-up route | `GET /health` that loads the model bundle | Warm up with a dummy `POST /predict`; a `/health` that returns without loading the model | A dummy predict runs a full inference for nothing and needs a valid VCF in the client. A `/health` that skips the load would leave the expensive part of the cold start for the visitor's first real prediction. |
+| Lambda timeout | 29 seconds | 60 seconds; 30 seconds | API Gateway HTTP API cuts off integrations at 30 seconds whatever the Lambda timeout. A longer Lambda timeout only means the gateway answers first with its own 503, outside the error contract, while the Lambda keeps running and billing. At 29 seconds the Lambda times out first. |
+| Cost cap | API Gateway stage throttling (2 rps, burst 10) | Lambda reserved concurrency; AWS WAF rate rules; API keys | Throttling rejects excess requests before any Lambda runs and needs no extra service. WAF adds a monthly charge larger than the demo's spend. API keys cannot be kept secret in a static site. |
 | Model→Lambda binding | `sam deploy --parameter-overrides MODEL_RUN_ID=<run_id>` after a successful training run | SSM Parameter Store lookup at Lambda cold start, "latest" S3 pointer, dynamic discovery | Explicit binding keeps the CFN stack as the source of truth for what's deployed; avoids hidden runtime coupling between training and inference |
 
 ## Open Questions & Future Decisions
@@ -193,8 +227,11 @@ Two roles:
 3. ✅ Single training run; model version is fixed at deploy time via `MODEL_RUN_ID` — no model selection UI or versioning logic needed
 4. ✅ SAM owns inference IaC; SageMaker Python SDK owns training launch; the two halves are intentionally separate tools
 
+### Open
+1. Cold-start duration against the 29-second timeout. The container start plus model-bundle load has not been measured on the deployed Lambda. If it is near or over 29 seconds, the warm-up cannot complete and every first request times out. The first lever is the inference image's dependency list (`DEPLOY-BE-023`): pandas, scikit-learn, and requests are installed today, and each is a candidate for removal if inference does not need it.
+
 ### Deferred
-1. API Gateway authentication (API key vs Cognito) — out of scope for SDD demo
+1. API Gateway authentication (API key vs Cognito) — out of scope for SDD demo; the browser client could not keep an API key secret in any case
 2. End-to-end CI/CD pipeline (build container → push to ECR → launch training → run `sam deploy --parameter-overrides`) — the pieces exist as standalone commands; wiring them into a CI workflow is a future step
 
 ## References
@@ -202,3 +239,4 @@ Two roles:
 - `docs/llds/01_data-ingestion.md` — S3 read patterns
 - `docs/llds/04_model-training.md` — artifact bundle written to S3
 - `docs/llds/05_prediction.md` — artifact bundle read from S3, results written to S3
+- `docs/llds/07_ui.md` — browser client that calls `/predict` and `/health` under the CORS and throttling settings above

@@ -32,10 +32,10 @@ Three personas collaborate on this pipeline:
 
 ## Non-Goals
 
-- Real-time / low-latency inference (batch pipeline only)
+- Guaranteed low-latency inference: there is no provisioned capacity, so the first live prediction after an idle period may wait on a cold start
 - Support for omics data types beyond SNPs (e.g., RNA-seq, methylation) — deferred
 - Clinical diagnostic use (research and demonstration scope only)
-- Production-hardened UI (Streamlit is a demo interface, not a production web app)
+- Production-hardened UI (the static site is a demo interface, not a production web app)
 
 ## System Design
 
@@ -47,7 +47,7 @@ Three personas collaborate on this pipeline:
 5. Evaluation          — confusion matrix, F1-score reporting
 6. Prediction          — phenotype label + confidence score + marker contribution trace
 7. Deployment          — S3 storage, SageMaker training job, Lambda execution, IAM
-8. UI                  — Streamlit frontend; Business Analyst submits SNP data and views predictions
+8. UI                  — static HTML/JS site on GitHub Pages; Business Analyst submits SNP data and views predictions
 ```
 
 ## Key Design Decisions
@@ -61,8 +61,9 @@ Three personas collaborate on this pipeline:
 | Workload split | Local data pull/prep → S3 → SageMaker training → S3 → Lambda inference | Deliberate use of each AWS service where it is the industry-standard fit; data acquisition stays local, training and inference are cloud-only |
 | Inference IaC | AWS SAM (`template.yaml` + `samconfig.toml`) | Showcases SAM; clean fit for packaging Lambda + API Gateway as a single deployable stack |
 | Training launch | SageMaker Python SDK (`sagemaker.estimator.Estimator`) from a local launcher script | Industry-standard programmatic interface for SageMaker training; treats training as the imperative one-shot job it is, rather than forcing it into declarative CloudFormation |
-| UI framework | Streamlit | Minimal code; locally runnable; suitable for demo use by Business Analyst persona without a full web app |
-| UI delivery | Streamlit Community Cloud | GitHub Codespaces, local `streamlit run`, EC2 | Permanent public URL; visitors click once and land on a running app with no container spin-up wait; repo is cloned by Streamlit Cloud so bundled sample files are present; free tier; better fit for non-technical demo audience |
+| UI framework | Static HTML/JS, calling the inference API directly from the browser | The UI is thin (pick a VCF, POST it, render a result), so it needs no server-side runtime; a static page loads instantly and costs nothing to host. Streamlit was rejected because it needs a running Python server, which means either an always-on host or a sleeping one with a wake-up wait. |
+| UI delivery | GitHub Pages, deployed by GitHub Actions | Permanent public URL served from a CDN with no server to wake, so demo visitors see the page immediately; free; lives in the same repo as the code, so sample files ship with the site. Streamlit Community Cloud was rejected because it puts idle apps to sleep and a visitor must wait for the app to wake up, which is too slow for a demo visitor. EC2 and GitHub Codespaces were rejected as cost and setup burdens for a non-technical audience. |
+| Inference cold-start mitigation | Precomputed results for the bundled samples, plus a warm-up request to the API on page load | Lambda cold start (container pull plus model load) is the only remaining wait. Sample selections, the one-click path for visitors without their own VCF, return instantly from precomputed results. Uploaded files go to the live API and may wait on a cold start after an idle period; the page-load warm-up starts that cold start while the visitor chooses a file. A scheduled keep-warm ping and provisioned concurrency were rejected: both pay to keep Lambda warm around the clock for a demo that is idle most of the time. |
 | Development process | LID (EARS → Tests → Code) | Collapses BA/DS/Eng silos into one traceable artifact chain |
 
 ## Cross-Cutting Code Standards
@@ -73,7 +74,7 @@ Three engineering standards apply uniformly across every code-generating segment
 |---|---|---|
 | Function and class documentation | **Google-style docstrings** on every public function and class, declaring `Args`, `Returns`, `Raises` (and `Yields` for generators). Private helpers may use a one-line summary. | The codebase is reviewed by humans (interview, code-review, audit contexts); structured docstrings are the lowest-friction way to make intent legible without reading the implementation. Tooling (Sphinx, mkdocs, IDE hovers) all consume this format. |
 | Inline comments | Reserved for **non-obvious "why"**: hidden constraints, workarounds, ordering invariants, subtle correctness conditions. No "what" comments — identifier names already carry that. | Comments rot; identifiers don't (the linter catches stale names). Only commit a comment if removing it would leave a future reader confused. |
-| Production observability | The pipeline emits **structured logs to stdout/stderr** suitable for ingestion by Splunk / CloudWatch Logs Insights / equivalent aggregators. Every error path emits a `logger.error` line carrying enough context (operation, identifiers, exception type, request/run id) for a developer to triage from log output alone, without re-running the failing code. | Production code is debugged from logs, not from interactive sessions. If an operator can't determine *which operation failed, on what input, with what cause* from a single log line, the log line is insufficient. This is a non-negotiable, demo or otherwise. |
+| Production observability | All server-side code (data pull, training, the inference Lambda) emits **structured logs to stdout/stderr** suitable for ingestion by Splunk / CloudWatch Logs Insights / equivalent aggregators. Every error path emits a `logger.error` line carrying enough context (operation, identifiers, exception type, request/run id) for a developer to triage from log output alone, without re-running the failing code. | Production code is debugged from logs, not from interactive sessions. If an operator can't determine *which operation failed, on what input, with what cause* from a single log line, the log line is insufficient. This is a non-negotiable, demo or otherwise. The browser client is out of this standard's scope: it has no stdout reaching an aggregator, and every request it makes is logged server-side by the Lambda. Its console logging is defined in `docs/llds/07_ui.md`. |
 
 The two standards together mean: *any function a human reads should explain what it does to a human, and any failure a human investigates should explain itself in the log stream.*
 

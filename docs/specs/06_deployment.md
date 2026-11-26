@@ -22,10 +22,25 @@
 ## Lambda Inference
 
 - [ ] **DEPLOY-BE-007**: The inference Lambda function shall use a container image runtime with Python 3.12, including XGBoost and all pipeline dependencies.
-- [ ] **DEPLOY-BE-008**: The Lambda function shall be allocated 3008 MB memory and a 60-second timeout.
+- [ ] **DEPLOY-BE-008**: The Lambda function shall be allocated 3008 MB memory and a 29-second timeout.
 - [ ] **DEPLOY-BE-009**: The Lambda function shall cache the model artifact bundle in `/tmp` after the first load, and reuse the cached bundle on subsequent warm invocations within the same container lifecycle.
 - [ ] **DEPLOY-BE-010**: The Lambda function shall accept invocation via an API Gateway HTTP API endpoint.
 - [ ] **DEPLOY-BE-027**: The `POST /predict` Lambda route shall accept a JSON request body of shape `{"vcf": "<vcf_string>"}` where `vcf` is the raw VCF content as a UTF-8 string; no `phenotype` field is accepted or required — the model determines the ancestral population from the VCF data alone.
+- [ ] **DEPLOY-BE-028**: The HTTP API shall expose a `GET /health` route integrated with the same Lambda function as `POST /predict`.
+- [ ] **DEPLOY-BE-029**: When the Lambda receives a `GET /health` request, it shall load the model artifact bundle through the same cached load path used by `POST /predict` (loading it into `/tmp` if not already cached) and, if the load succeeds, return HTTP 200 with body `{"status": "ok"}`.
+
+## Browser Access (CORS)
+
+- [ ] **DEPLOY-BE-030**: The HTTP API's CORS configuration shall allow exactly two origins: `https://mattjtravers.github.io` and `http://localhost:8000`.
+- [ ] **DEPLOY-BE-031**: The HTTP API's CORS configuration shall allow exactly the methods `POST` and `GET`.
+- [ ] **DEPLOY-BE-032**: The HTTP API's CORS configuration shall allow exactly the request header `Content-Type`.
+- [ ] **DEPLOY-BE-033**: The HTTP API's CORS configuration shall not allow credentials.
+- [ ] **DEPLOY-BE-034**: The HTTP API's CORS configuration shall set a preflight `MaxAge` of 600 seconds.
+- [ ] **DEPLOY-BE-035**: The Lambda handler shall not set any `Access-Control-*` response header; CORS response headers and `OPTIONS` preflight responses shall come from the HTTP API's CORS configuration only.
+
+## Throttling
+
+- [ ] **DEPLOY-BE-036**: The HTTP API's default stage shall set `DefaultRouteSettings` with `ThrottlingRateLimit: 2` and `ThrottlingBurstLimit: 10`, applying to every route.
 
 ## IAM
 
@@ -50,5 +65,6 @@
 
 ## Inference Error Contract
 
-- [ ] **DEPLOY-BE-021**: On its first model load (cold start or first request), the Lambda shall verify that every file in the artifact bundle defined by `TRAIN-DATA-001` is present and readable at `s3://{PHENO_S3_BUCKET}/models/{MODEL_RUN_ID}/`; if any file is missing or unreadable, every request in that container lifecycle shall short-circuit to a `503 MODEL_UNAVAILABLE` response without re-attempting the load.
+- [ ] **DEPLOY-BE-021**: On its first model load (cold start, on the first `POST /predict` or `GET /health` request), the Lambda shall verify that every file in the artifact bundle defined by `TRAIN-DATA-001` is present and readable at `s3://{PHENO_S3_BUCKET}/models/{MODEL_RUN_ID}/`; if any file is missing or unreadable, every request in that container lifecycle shall short-circuit to a `503 MODEL_UNAVAILABLE` response without re-attempting the load.
+- [ ] **DEPLOY-BE-037**: If an invocation reaches the Lambda timeout while loading the model artifact bundle, the Lambda shall not record the load as failed, and the next request in that container shall re-attempt the load.
 - [ ] **DEPLOY-BE-022**: Every Lambda error response shall carry the HTTP status defined in the LLD's `§ Error contract` table (`503 MODEL_UNAVAILABLE`, `400 INVALID_INPUT`, `400 INVALID_VCF`, `500 INFERENCE_FAILED`, `500 INTERNAL_ERROR`), a JSON body of shape `{"error": <code>, "detail": <message>}`, and a `logger.error` line carrying the same code, the detail, and the AWS request id.
