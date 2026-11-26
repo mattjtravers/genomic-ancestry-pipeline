@@ -4,7 +4,7 @@
 
 This component trains an XGBoost classifier on the feature matrix produced by feature engineering, evaluates it via k-fold cross-validation, and persists the trained model artifact. The artifact includes the model weights, the feature registry, and the imputation medians — everything needed for inference without re-running the training pipeline.
 
-Training runs exclusively as a **SageMaker Training Job**. The training script (`pipeline/train.py`) is packaged in a Docker container and executed on a managed SageMaker instance — by default `ml.m5.2xlarge`, overridable per-run via the launcher's `--instance-type` flag (see `docs/llds/06_deployment.md § Training Launch`). Training is a batch operation; it does not need to be fast at inference time — it needs to be reproducible and evaluable.
+Training runs exclusively as a **SageMaker Training Job**. The training entry point (`src/genomic_ancestry_pipeline/sagemaker_train.py`) is packaged in a Docker container and executed on a managed SageMaker instance — by default `ml.m5.2xlarge`, overridable per-run via the launcher's `--instance-type` flag (see `docs/llds/06_deployment.md § Training Launch`). Training is a batch operation; it does not need to be fast at inference time — it needs to be reproducible and evaluable.
 
 ## Training Protocol
 
@@ -24,7 +24,7 @@ XGBoost (`xgboost.XGBClassifier`) with the following default hyperparameters (al
 ### Cross-Validation
 
 K-fold cross-validation with **k=5** (configurable). Each fold:
-1. Splits samples into train/validation sets (stratified by phenotype class)
+1. Splits samples into train/validation sets (stratified by population label)
 2. Trains XGBoost on train split
 3. Evaluates on validation split: computes per-class F1-score and generates a confusion matrix
 4. Records fold metrics
@@ -83,7 +83,7 @@ The model artifact bundle persisted to S3 contains:
 - `feature_registry.json` — `FeatureRegistry` from feature engineering
 - `imputation_medians.json` — per-variant medians from preprocessing
 - `evaluation_report.json` — cross-validation results
-- `label_encoder.json` — maps integer class indices to phenotype label strings
+- `label_encoder.json` — maps integer class indices to population label strings
 
 This bundle is the sole input to the prediction component. No other pipeline stage is needed at inference time.
 
@@ -105,7 +105,6 @@ This bundle is the sole input to the prediction component. No other pipeline sta
 
 ### Deferred
 1. Hyperparameter optimisation — manual defaults are sufficient for the SDD demo; HPO via SageMaker Experiments can be added later
-2. Multi-label phenotype prediction (currently single phenotype per run)
 
 ## References
 

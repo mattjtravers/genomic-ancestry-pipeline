@@ -23,7 +23,7 @@ Selection strategy (in order of application):
 
 1. **MAF filter** — drop variants with minor allele frequency < 0.01 (rare variants with insufficient signal)
 2. **Variance filter** — drop near-zero-variance variants after dosage encoding
-3. **Phenotype-specific filter** — optionally, top-N variants by univariate association score (chi-squared for categorical phenotypes). N is a configurable parameter; default 10,000.
+3. **Label-association filter** — optionally, top-N variants by univariate chi-squared association score against the population label. N is a configurable parameter; default 10,000.
 
 All filter thresholds are configurable via pipeline parameters, not hard-coded.
 
@@ -52,7 +52,7 @@ The registry is persisted alongside the trained model artifact so prediction can
 ```
 FeatureMatrix
   X: np.ndarray           # shape (n_samples, n_features)
-  y: np.ndarray           # shape (n_samples,) — phenotype labels
+  y: np.ndarray           # shape (n_samples,) — population class indices
   sample_ids: list[str]
   splits: list[str]       # parallel to sample_ids; "train" or "test" per sample
   registry: FeatureRegistry

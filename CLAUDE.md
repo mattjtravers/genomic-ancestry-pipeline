@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-ML pipeline to predict human phenotype from biological/genetic data.
+ML pipeline to predict ancestral population from SNP genotype data (1000 Genomes Project cohorts as training labels).
 
 ## Environment
 

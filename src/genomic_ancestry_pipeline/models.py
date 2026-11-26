@@ -8,10 +8,10 @@ from pydantic import BaseModel
 
 
 class SampleMetadata(BaseModel):
-    """Per-sample population and phenotype label metadata parsed from the sample TSV."""
+    """Per-sample population codes and prediction labels parsed from the sample TSV."""
 
     population: dict[str, str]  # sample_id → population code
-    phenotype_labels: dict[str, str]  # sample_id → phenotype label string
+    phenotype_labels: dict[str, str]  # sample_id → prediction label (the population code)
 
 
 class RawVariant(BaseModel):
@@ -72,14 +72,14 @@ class FeatureMatrix:
     """Model-ready feature matrix with labels, sample identifiers, and split assignments."""
 
     X: np.ndarray  # shape (n_samples, n_features), dtype float
-    y: np.ndarray  # shape (n_samples,), phenotype class indices
+    y: np.ndarray  # shape (n_samples,), population class indices
     sample_ids: list[str]
     splits: list[Literal["train", "test"]]  # parallel to sample_ids
     registry: FeatureRegistry
 
 
 class MarkerContribution(BaseModel):
-    """SHAP contribution of a single SNP marker to a phenotype prediction."""
+    """SHAP contribution of a single SNP marker to a population prediction."""
 
     variant_id: str
     chrom: str
@@ -91,10 +91,10 @@ class MarkerContribution(BaseModel):
 
 
 class PredictionResult(BaseModel):
-    """Inference result: phenotype label, confidence score, and top marker attributions."""
+    """Inference result: population label, confidence score, and top marker attributions."""
 
     sample_id: str
-    predicted_phenotype: str
+    predicted_phenotype: str  # predicted population code, e.g. "CHB"
     confidence_score: float  # max class probability, in [0.0, 1.0]
     class_probabilities: dict[str, float]  # all classes, human-readable labels
     top_markers: list[MarkerContribution]

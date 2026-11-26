@@ -115,7 +115,7 @@ def train(
     class_indices = sorted({int(c) for c in feature_matrix.y})
 
     # StratifiedKFold rejects n_splits > min class size; clamp so small training
-    # cohorts still run CV (e.g., the 1000 Genomes minority phenotype classes).
+    # cohorts still run CV (e.g., the 1000 Genomes minority population classes).
     train_class_counts = (
         np.bincount(y_train.astype(int)) if len(y_train) else np.array([], dtype=int)
     )
@@ -245,13 +245,13 @@ def save_artifact(
     Writes five files that together form a self-contained inference bundle:
     ``model.json`` (XGBoost booster), ``feature_registry.json``,
     ``imputation_medians.json``, ``evaluation_report.json``, and
-    ``label_encoder.json`` (integer class index → phenotype label string).
+    ``label_encoder.json`` (integer class index → population label string).
 
     Args:
         booster: Trained XGBoost classifier or Booster supporting ``save_model``.
         registry: FeatureRegistry from feature engineering.
         imputation_medians: Per-variant training-split medians from preprocessing.
-        label_encoder: Mapping of integer class indices to phenotype label strings.
+        label_encoder: Mapping of integer class indices to population label strings.
         evaluation_report: Cross-validation and test-set evaluation results.
         bucket: S3 bucket name.
         run_id: Training run identifier; artifacts land under ``models/{run_id}/``.

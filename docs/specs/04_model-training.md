@@ -25,5 +25,5 @@
 ## Model Artifact
 
 - [x] **TRAIN-DATA-001**: The system shall persist the model artifact bundle to `s3://{PHENO_S3_BUCKET}/models/{run_id}/` containing: `model.json` (XGBoost booster), `feature_registry.json`, `imputation_medians.json`, `evaluation_report.json`, and `label_encoder.json`.
-- [x] **TRAIN-DATA-002**: The `label_encoder.json` shall map integer class indices used internally by XGBoost to human-readable phenotype label strings.
+- [x] **TRAIN-DATA-002**: The `label_encoder.json` shall map integer class indices used internally by XGBoost to human-readable population label strings.
 - [x] **TRAIN-DATA-003**: The model artifact bundle shall be self-contained — no other pipeline stage shall be required to run inference against it.

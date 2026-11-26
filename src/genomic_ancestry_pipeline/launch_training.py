@@ -58,7 +58,7 @@ def _build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="launch_training",
-        description="Submit a SageMaker training job for the phenotype pipeline.",
+        description="Submit a SageMaker training job for the genomic ancestry pipeline.",
     )
     parser.add_argument("--bucket", required=True, help="S3 bucket name (PHENO_S3_BUCKET)")
     parser.add_argument(

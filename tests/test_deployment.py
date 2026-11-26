@@ -239,7 +239,7 @@ def _http_api_event(method: str, path: str, body: str | None = None) -> dict:
 def _valid_artifact() -> dict:
     return {
         "booster": MagicMock(),
-        "label_encoder": {0: "blue", 1: "brown", 2: "green"},
+        "label_encoder": {0: "CEU", 1: "CHB", 2: "YRI"},
         "feature_registry": MagicMock(),
         "imputation_medians": {},
         "evaluation_report": {},
@@ -339,7 +339,7 @@ def test_lambda_short_circuits_subsequent_requests_after_failed_load():
 
 # @spec DEPLOY-BE-027
 def test_lambda_predict_accepts_vcf_only_body():
-    """POST /predict with only {"vcf": "..."} — no phenotype field — returns 200."""
+    """POST /predict with only {"vcf": "..."} and no other field returns 200."""
     event = _http_api_event(
         "POST", "/predict",
         body=json.dumps({"vcf": "##fileformat=VCFv4.1\n"}),
@@ -355,8 +355,8 @@ def test_lambda_predict_accepts_vcf_only_body():
 
 
 # @spec DEPLOY-BE-027
-def test_lambda_predict_ignores_phenotype_if_sent():
-    """POST /predict silently ignores any 'phenotype' field in the body."""
+def test_lambda_predict_ignores_extra_fields():
+    """POST /predict ignores fields other than 'vcf' in the body."""
     event = _http_api_event(
         "POST", "/predict",
         body=json.dumps({"vcf": "##fileformat=VCFv4.1\n", "phenotype": "should_be_ignored"}),
@@ -667,7 +667,7 @@ def test_lambda_returns_500_inference_failed_when_booster_output_shape_is_wrong(
         "booster": booster,
         "feature_registry": feature_registry,
         "imputation_medians": {e.variant_id: 1.0 for e in feature_registry.features},
-        "label_encoder": {0: "blue", 1: "brown", 2: "green"},
+        "label_encoder": {0: "CEU", 1: "CHB", 2: "YRI"},
         "evaluation_report": {},
     }
     event = _http_api_event(

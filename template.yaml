@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  Phenotype Pipeline inference Lambda fronted by an API Gateway HTTP API.
+  Genomic ancestry pipeline inference Lambda fronted by an API Gateway HTTP API.
   Trained model artifacts are read from s3://{PhenoS3Bucket}/models/{ModelRunId}/.
   See docs/llds/06_deployment.md for the canonical design.
 

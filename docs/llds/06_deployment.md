@@ -136,7 +136,7 @@ The Lambda is fronted by an **API Gateway HTTP API** (not REST API) — HTTP API
 | `POST` | `/predict` | Runs inference on a single-sample VCF; returns a `PredictionResult` JSON body |
 | `GET` | `/health` | Loads the model bundle if not already cached; reports whether the model is ready |
 
-The `/predict` endpoint accepts a JSON body of shape `{"vcf": "<vcf_string>"}` where `vcf` is the raw VCF content as a UTF-8 string. It passes the pre-cached artifact bundle directly to `predict()` — no S3 read occurs per-request — together with `model_artifact_version="models/{MODEL_RUN_ID}/"`, the bundle prefix the artifact was loaded from, so every response names its model in the form `docs/llds/05_prediction.md § Artifact Version Identity` defines. The `phenotype` field is not part of the request contract; the model determines the ancestral population from the VCF data alone.
+The `/predict` endpoint accepts a JSON body of shape `{"vcf": "<vcf_string>"}` where `vcf` is the raw VCF content as a UTF-8 string. It passes the pre-cached artifact bundle directly to `predict()` — no S3 read occurs per-request — together with `model_artifact_version="models/{MODEL_RUN_ID}/"`, the bundle prefix the artifact was loaded from, so every response names its model in the form `docs/llds/05_prediction.md § Artifact Version Identity` defines. No other request field is part of the contract; the model has a single target, ancestral population, which it determines from the VCF data alone.
 
 The `/health` endpoint takes no request body. It runs the same model-bundle load as the first `/predict` call — the cold-start load into `/tmp`, including the completeness check below — so a container that has answered `/health` serves its next `/predict` warm. On success it returns `200` with body `{"status": "ok"}`. If the bundle cannot be loaded it returns the same `503 MODEL_UNAVAILABLE` as `/predict` would. The browser client calls it once per page load as a warm-up and ignores the response (`docs/llds/07_ui.md § Warm-up`); it is also a convenient post-deploy smoke check.
 
@@ -248,7 +248,6 @@ Two roles:
 |---|---|---|---|
 | Training execution | SageMaker Training Job | SageMaker Pipelines, EC2, local only | Training Jobs are the simplest managed compute option; Pipelines adds orchestration complexity unnecessary for a demo |
 | Inference execution | Lambda (container image) | SageMaker endpoint, ECS | Lambda is serverless and cost-effective for low-frequency demo predictions; SageMaker endpoint is always-on and expensive |
-| Local dev S3 | Local filesystem via `PHENO_LOCAL_DATA_DIR` env var | LocalStack, moto mocking | Filesystem adapter is simple and transparent; LocalStack/moto add unnecessary dependencies for a demo |
 | Run ID format | Timestamp + UUID | Incrementing integer, git SHA | Timestamps sort naturally; UUIDs prevent collisions; git SHA would require a git context in SageMaker |
 | Inference IaC | AWS SAM | AWS CDK, Terraform, plain boto3 scripts | SAM is the industry-standard declarative tool for the Lambda + API Gateway shape; ships with `sam local invoke` for in-Docker local execution; CDK is heavier for a single function; Terraform would not gain us anything for a one-stack project |
 | Training launch interface | SageMaker Python SDK (`Estimator`) | Raw boto3 `create_training_job`, SAM/CFN `AWS::SageMaker::TrainingJob`, Step Functions | SDK is the canonical AWS-blessed way to launch training; CFN resource is rarely used in practice because training is imperative/one-shot; Step Functions adds orchestration we don't need yet |
@@ -274,6 +273,7 @@ Two roles:
 ### Deferred
 1. API Gateway authentication (API key vs Cognito) — out of scope for SDD demo; the browser client could not keep an API key secret in any case
 2. End-to-end CI/CD pipeline (build container → push to ECR → launch training → run `sam deploy --parameter-overrides`) — the pieces exist as standalone commands; wiring them into a CI workflow is a future step
+3. Local-file data access for development, in place of S3 — owned by `docs/llds/01_data-ingestion.md § Open Questions & Future Decisions` (Deferred)
 
 ## References
 

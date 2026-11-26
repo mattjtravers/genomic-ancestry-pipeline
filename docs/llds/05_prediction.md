@@ -2,7 +2,7 @@
 
 ## Context and Design Philosophy
 
-This component loads a trained model artifact and runs inference on new SNP data. It produces three outputs per sample: a predicted phenotype label, a confidence score, and a list of contributing genomic markers. Marker traceability is the key differentiator from a bare XGBoost `predict` call — it is a first-class output, not an afterthought.
+This component loads a trained model artifact and runs inference on new SNP data. It produces three outputs per sample: a predicted ancestral population label, a confidence score, and a list of contributing genomic markers. Marker traceability is the key differentiator from a bare XGBoost `predict` call — it is a first-class output, not an afterthought.
 
 The prediction component is the component most directly serving the Business Analyst persona. Every output must be interpretable and auditable.
 
@@ -85,7 +85,7 @@ MarkerContribution
 ```
 PredictionResult
   sample_id: str
-  predicted_phenotype: str
+  predicted_phenotype: str                 # predicted population code, e.g. "CHB"
   confidence_score: float                  # in [0.0, 1.0]
   class_probabilities: dict[str, float]    # all classes
   top_markers: list[MarkerContribution]

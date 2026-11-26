@@ -1,9 +1,9 @@
-"""Inference: load model artifact, predict phenotype with confidence and SHAP markers.
+"""Inference: load model artifact, predict ancestral population with confidence and SHAP markers.
 
 Implements the prediction segment of the arrow of intent. :func:`predict` loads the
 artifact bundle from S3, parses a single-sample VCF, builds a feature vector using
 the stored :class:`FeatureRegistry` and ``imputation_medians`` (no refitting), and
-returns a :class:`PredictionResult` with the predicted phenotype, confidence score,
+returns a :class:`PredictionResult` with the predicted population label, confidence score,
 full class probability distribution, and the top-N markers by per-sample SHAP
 contribution.
 

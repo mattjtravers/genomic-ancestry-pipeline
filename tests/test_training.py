@@ -162,7 +162,7 @@ def test_save_artifact_writes_required_files_to_s3(feature_registry):
     report = EvaluationReport(
         folds=[],
         aggregate=AggregateMetrics(f1_macro_mean=0.9, f1_macro_std=0.05, confusion_matrix_mean=[]),
-        test_set=TestSetMetrics(f1_per_class={"blue": 0.9}, f1_macro=0.9, confusion_matrix=[]),
+        test_set=TestSetMetrics(f1_per_class={"CEU": 0.9}, f1_macro=0.9, confusion_matrix=[]),
     )
     mock_booster = MagicMock()
     mock_booster.save_model = MagicMock()
@@ -173,7 +173,7 @@ def test_save_artifact_writes_required_files_to_s3(feature_registry):
             booster=mock_booster,
             registry=feature_registry,
             imputation_medians={"15_28513871_A_G": 1.0},
-            label_encoder={0: "blue", 1: "brown", 2: "green"},
+            label_encoder={0: "CEU", 1: "CHB", 2: "YRI"},
             evaluation_report=report,
             bucket="my-bucket",
             run_id="20240115-a3f2c1",
@@ -187,7 +187,7 @@ def test_save_artifact_writes_required_files_to_s3(feature_registry):
 
 
 # @spec TRAIN-DATA-002
-def test_label_encoder_maps_int_indices_to_phenotype_strings(feature_registry):
+def test_label_encoder_maps_int_indices_to_population_strings(feature_registry):
     """label_encoder.json contains integer keys mapping to human-readable label strings."""
     from genomic_ancestry_pipeline.models import AggregateMetrics, TestSetMetrics
 
@@ -196,7 +196,7 @@ def test_label_encoder_maps_int_indices_to_phenotype_strings(feature_registry):
         aggregate=AggregateMetrics(f1_macro_mean=0.9, f1_macro_std=0.05, confusion_matrix_mean=[]),
         test_set=TestSetMetrics(f1_per_class={}, f1_macro=0.0, confusion_matrix=[]),
     )
-    label_encoder = {0: "blue", 1: "brown", 2: "green"}
+    label_encoder = {0: "CEU", 1: "CHB", 2: "YRI"}
 
     captured = {}
     with patch("genomic_ancestry_pipeline.training.boto3") as mock_boto3:
@@ -217,7 +217,7 @@ def test_label_encoder_maps_int_indices_to_phenotype_strings(feature_registry):
 
     if captured.get("body"):
         loaded = json.loads(captured["body"])
-        # Keys may be serialized as strings in JSON; values must be phenotype strings
+        # Keys may be serialized as strings in JSON; values must be population label strings
         assert all(isinstance(v, str) for v in loaded.values())
 
 
@@ -236,7 +236,7 @@ def test_artifact_bundle_is_self_contained(feature_registry):
             booster=MagicMock(),
             registry=feature_registry,
             imputation_medians={"15_28513871_A_G": 1.0},
-            label_encoder={0: "blue"},
+            label_encoder={0: "CEU"},
             evaluation_report=report,
             bucket="my-bucket",
             run_id="20240115-a3f2c1",

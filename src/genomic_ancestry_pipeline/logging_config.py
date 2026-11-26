@@ -1,4 +1,4 @@
-"""Logging configuration for the phenotype pipeline.
+"""Logging configuration for the genomic ancestry pipeline.
 
 Routes log records by level so operators can read the two streams separately
 when running the CLI locally:

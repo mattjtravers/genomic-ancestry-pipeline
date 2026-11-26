@@ -268,41 +268,33 @@ def _parse_vcf(
     return samples, variants
 
 
+# @spec INGEST-DATA-002, INGEST-DATA-003
 def _parse_metadata(raw: bytes) -> SampleMetadata:
-    """Parse TSV metadata bytes into a SampleMetadata object."""
+    """Parse TSV metadata bytes into a SampleMetadata object.
+
+    The prediction label for each sample is its population code; no other
+    metadata column is read as a label. Samples with an empty population value
+    get no label.
+    """
     population: dict[str, str] = {}
-    phenotype_labels: dict[str, str] = {}
 
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
-        return SampleMetadata(population=population, phenotype_labels=phenotype_labels)
+        return SampleMetadata(population=population, phenotype_labels={})
 
     reader = csv.DictReader(io.StringIO(text), delimiter="\t")
     fields = reader.fieldnames or []
     sample_col = _pick_col(fields, {"sample", "sample_id", "sampleid"})
     pop_col = _pick_col(fields, {"population", "pop"})
-    pheno_col = _pick_col(
-        fields, {"phenotype", "phenotype_label", "eye_color", "phenotype_eye_color"}
-    )
-    if sample_col:
+    if sample_col and pop_col:
         for row in reader:
             sid = (row.get(sample_col) or "").strip()
-            if not sid:
-                continue
-            if pop_col and (pop_val := row.get(pop_col)):
-                population[sid] = pop_val.strip()
-            if pheno_col and (pheno_val := row.get(pheno_col)):
-                phenotype_labels[sid] = pheno_val.strip()
+            pop_val = (row.get(pop_col) or "").strip()
+            if sid and pop_val:
+                population[sid] = pop_val
 
-    # When the metadata file has no explicit phenotype column (e.g., 1000 Genomes
-    # sample_info which carries population codes but no eye-color labels), fall back
-    # to population as the prediction target. Predicting population from SNPs is a
-    # valid genomics task that makes the demo trainable end-to-end.
-    if not phenotype_labels and population:
-        phenotype_labels = dict(population)
-
-    return SampleMetadata(population=population, phenotype_labels=phenotype_labels)
+    return SampleMetadata(population=population, phenotype_labels=dict(population))
 
 
 def _pick_col(fields: list[str], candidates: set[str]) -> str | None:

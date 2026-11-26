@@ -10,7 +10,7 @@ Pydantic validation runs at the entry point of this component, not in data inges
 
 The train/test split is owned by this component and applied at the entry point, before any statistics are fit. This prevents leakage from the test set into imputation medians, missingness filtering, or downstream feature engineering.
 
-Split ratio: **80% train / 20% test**, stratified by phenotype class. The split is seeded for reproducibility (`random_state` configurable via pipeline parameter).
+Split ratio: **80% train / 20% test**, stratified by population label. The split is seeded for reproducibility (`random_state` configurable via pipeline parameter).
 
 A single `CleanSnpDataset` is emitted with a per-sample `sample_splits` dict mapping each `sample_id` to `"train"` or `"test"`. Downstream components (feature engineering, model training) are responsible for respecting this mapping — they must fit only on samples marked `"train"`.
 

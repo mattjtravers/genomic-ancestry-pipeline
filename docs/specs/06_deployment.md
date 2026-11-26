@@ -29,7 +29,7 @@
 - [x] **DEPLOY-BE-008**: The Lambda function shall be allocated 3008 MB memory and a 29-second timeout.
 - [x] **DEPLOY-BE-009**: The Lambda function shall cache the model artifact bundle in `/tmp` after the first load, and reuse the cached bundle on subsequent warm invocations within the same container lifecycle.
 - [x] **DEPLOY-BE-010**: The Lambda function shall accept invocation via an API Gateway HTTP API endpoint.
-- [x] **DEPLOY-BE-027**: The `POST /predict` Lambda route shall accept a JSON request body of shape `{"vcf": "<vcf_string>"}` where `vcf` is the raw VCF content as a UTF-8 string; no `phenotype` field is accepted or required — the model determines the ancestral population from the VCF data alone.
+- [x] **DEPLOY-BE-027**: The `POST /predict` Lambda route shall accept a JSON request body of shape `{"vcf": "<vcf_string>"}` where `vcf` is the raw VCF content as a UTF-8 string; no other field is required, and any other field in the body is ignored — the model determines the ancestral population from the VCF data alone.
 - [x] **DEPLOY-BE-047**: When the Lambda handles a `POST /predict` request, it shall pass `model_artifact_version` to `predict()` as `models/{MODEL_RUN_ID}/`, built from the `MODEL_RUN_ID` environment variable.
 - [x] **DEPLOY-BE-028**: The HTTP API shall expose a `GET /health` route integrated with the same Lambda function as `POST /predict`.
 - [x] **DEPLOY-BE-029**: When the Lambda receives a `GET /health` request, it shall load the model artifact bundle through the same cached load path used by `POST /predict` (loading it into `/tmp` if not already cached) and, if the load succeeds, return HTTP 200 with body `{"status": "ok"}`.
@@ -64,7 +64,7 @@
 
 ## Training Launcher
 
-- [x] **DEPLOY-BE-016**: SageMaker training jobs shall be launched via `pipeline/launch_training.py` using `sagemaker.estimator.Estimator`; the script shall accept k-fold k, MAF threshold, marker count N, random seed, and SageMaker instance type as CLI flags (instance type defaulting to `ml.m5.2xlarge`); the script shall block until the training job reports terminal status and shall emit the resulting `run_id` to stdout only on successful completion.
+- [x] **DEPLOY-BE-016**: SageMaker training jobs shall be launched via `src/genomic_ancestry_pipeline/launch_training.py` using `sagemaker.estimator.Estimator`; the script shall accept k-fold k, MAF threshold, marker count N, random seed, and SageMaker instance type as CLI flags (instance type defaulting to `ml.m5.2xlarge`); the script shall block until the training job reports terminal status and shall emit the resulting `run_id` to stdout only on successful completion.
 - [x] **DEPLOY-BE-017**: The training launcher shall exit non-zero before calling `Estimator.fit` if AWS credentials are missing or the configured S3 bucket is unreachable.
 - [x] **DEPLOY-BE-018**: The training launcher shall check `s3://{PHENO_S3_BUCKET}/models/{run_id}/` for any existing object before submission and shall exit non-zero with a clear error if the prefix is occupied.
 

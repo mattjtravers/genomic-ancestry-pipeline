@@ -19,13 +19,13 @@ Three personas collaborate on this pipeline:
 
 | Persona | Domain | Role |
 |---|---|---|
-| **Business Analyst** | Intent | Defines phenotype targets, interprets confidence scores, requires marker traceability |
+| **Business Analyst** | Intent | Defines the population labels the model predicts, interprets confidence scores, requires marker traceability |
 | **Data Scientist** | Rigor | Owns model selection, validation methodology, and evaluation metrics |
 | **Software Engineer** | Integrity | Owns infrastructure (AWS S3/Lambda/SageMaker), data contracts (Pydantic), and test coverage (EARS-driven TDD) |
 
 ## Goals
 
-- Predict human phenotypes from SNP data with per-prediction confidence scores
+- Predict ancestral population from SNP data with per-prediction confidence scores
 - Trace every prediction to the contributing genomic markers
 - Enforce data schemas and validation at every pipeline stage via Pydantic
 - Demonstrate a single "Spec-to-Production" LID lifecycle that replaces compartmentalized ML development
@@ -45,7 +45,7 @@ Three personas collaborate on this pipeline:
 3. Feature Engineering — SNP encoding, marker selection
 4. Model Training      — XGBoost with k-fold cross-validation
 5. Evaluation          — confusion matrix, F1-score reporting
-6. Prediction          — phenotype label + confidence score + marker contribution trace
+6. Prediction          — ancestral population label + confidence score + marker contribution trace
 7. Deployment          — S3 storage, SageMaker training job, Lambda execution, IAM
 8. UI                  — static HTML/JS site on GitHub Pages; Business Analyst submits SNP data and views predictions
 ```
@@ -80,7 +80,7 @@ The two standards together mean: *any function a human reads should explain what
 
 ## Success Metrics
 
-- F1-score on held-out test set reported per phenotype class
+- F1-score on held-out test set reported per population class
 - 100% of predictions include a confidence score
 - 100% of predictions traceable to contributing SNP markers
 - All EARS specs have corresponding passing tests

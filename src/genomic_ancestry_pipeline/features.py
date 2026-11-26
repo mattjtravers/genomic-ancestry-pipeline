@@ -135,7 +135,7 @@ def build_feature_matrix(
 
 
 def _build_label_encoder(labels: dict[str, str], samples: list[str]) -> dict[str, int]:
-    """Map sorted unique phenotype label strings to integer class indices."""
+    """Map sorted unique population label strings to integer class indices."""
     unique = sorted({labels[s] for s in samples if s in labels})
     return {label: idx for idx, label in enumerate(unique)}
 

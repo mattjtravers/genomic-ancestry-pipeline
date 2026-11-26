@@ -141,3 +141,42 @@ def test_missing_metadata_raises_ingest_error():
 
         with pytest.raises(IngestError):
             load_raw_dataset(bucket="my-bucket")
+
+
+# ── Prediction label source ────────────────────────────────────────────────────
+
+
+def _load_with_metadata(tsv: str) -> RawSnpDataset:
+    """Run load_raw_dataset against a one-variant VCF and the given metadata TSV."""
+    with patch("genomic_ancestry_pipeline.ingest.boto3") as mock_boto3:
+        mock_s3 = mock_boto3.client.return_value
+
+        def _get_object(**kwargs):
+            if "sample_info" in kwargs.get("Key", ""):
+                return {"Body": io.BytesIO(tsv.encode())}
+            return {"Body": io.BytesIO(_vcf_bytes(_BIALLELIC_ROW))}
+
+        mock_s3.get_object.side_effect = _get_object
+        return load_raw_dataset(bucket="my-bucket")
+
+
+# @spec INGEST-DATA-002
+def test_prediction_label_is_population_even_when_other_label_columns_exist():
+    """Labels come from the population column; phenotype/eye_color columns are not read."""
+    tsv = (
+        "Sample\tPopulation\tphenotype\teye_color\n"
+        "s01\tYRI\tbrown\tbrown\n"
+        "s02\tCEU\tblue\tblue\n"
+    )
+    result = _load_with_metadata(tsv)
+
+    assert result.metadata.phenotype_labels == {"s01": "YRI", "s02": "CEU"}
+
+
+# @spec INGEST-DATA-003
+def test_sample_with_empty_population_gets_no_label():
+    """A sample whose population value is empty has no prediction label."""
+    tsv = "Sample\tPopulation\ns01\tYRI\ns02\t\n"
+    result = _load_with_metadata(tsv)
+
+    assert result.metadata.phenotype_labels == {"s01": "YRI"}

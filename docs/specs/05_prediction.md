@@ -30,7 +30,7 @@
 
 ## Prediction Output
 
-- [x] **PRED-PROC-005**: The system shall produce a predicted phenotype label for each input sample by applying the loaded XGBoost model to the preprocessed feature vector.
+- [x] **PRED-PROC-005**: The system shall produce a predicted ancestral population label for each input sample by applying the loaded XGBoost model to the preprocessed feature vector.
 - [x] **PRED-PROC-006**: The system shall produce a confidence score for each prediction, defined as the probability assigned to the predicted class by the loaded `xgb.Booster`'s class-probability output (`booster.predict(xgb.DMatrix(X))`), i.e. the maximum class probability, in the range [0.0, 1.0].
 - [x] **PRED-DATA-001**: The system shall include the full class probability distribution (all classes, mapped to human-readable labels via `label_encoder.json`) in the `PredictionResult`.
 

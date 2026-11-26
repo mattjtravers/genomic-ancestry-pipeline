@@ -1,4 +1,4 @@
-# SAM CLI configuration for the phenotype-pipeline inference stack.
+# SAM CLI configuration for the genomic ancestry pipeline inference stack.
 # @spec DEPLOY-BE-019 — region pinned to us-east-1; do not rely on AWS_DEFAULT_REGION.
 
 version = 0.1

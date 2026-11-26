@@ -99,7 +99,7 @@ def _stratified_split(
     """Custom stratified split that handles small classes sklearn refuses (n_test < n_classes).
 
     Sklearn's StratifiedShuffleSplit errors when the test fold cannot represent every class.
-    Phenotype label classes here can be small (e.g., 2 samples for a minority class), so
+    Population label classes here can be small (e.g., 2 samples for a minority class), so
     the split prioritizes small classes for test representation and distributes leftover
     slots to the largest classes.
     """

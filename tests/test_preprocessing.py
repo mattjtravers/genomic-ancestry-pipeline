@@ -29,8 +29,8 @@ def test_split_is_80_20(raw_dataset):
 
 
 # @spec PREP-PROC-002
-def test_split_is_stratified_by_phenotype(raw_dataset):
-    """Train and test sets each contain at least one sample from every phenotype class."""
+def test_split_is_stratified_by_population(raw_dataset):
+    """Train and test sets each contain at least one sample from every population class."""
     result = preprocess(raw_dataset)
     labels = raw_dataset.metadata.phenotype_labels
     classes = set(labels.values())
@@ -38,7 +38,7 @@ def test_split_is_stratified_by_phenotype(raw_dataset):
     train_classes = {labels[s] for s, sp in result.sample_splits.items() if sp == "train"}
     test_classes = {labels[s] for s, sp in result.sample_splits.items() if sp == "test"}
 
-    assert train_classes == classes, "Train set is missing phenotype classes"
+    assert train_classes == classes, "Train set is missing population classes"
     assert len(test_classes) > 0, "Test set is empty"
 
 
@@ -73,10 +73,10 @@ def test_missingness_filter_drops_high_missing_variants(sample_metadata):
     """Variants with training-split missing rate above the threshold are dropped."""
     samples = [f"s{i:02d}" for i in range(1, 11)]
     labels = {
-        s: ("blue" if i < 5 else ("brown" if i < 9 else "green"))
+        s: ("CEU" if i < 5 else ("CHB" if i < 9 else "YRI"))
         for i, s in enumerate(samples, 1)
     }
-    meta = SampleMetadata(population={s: "EUR" for s in samples}, phenotype_labels=labels)
+    meta = SampleMetadata(population=labels, phenotype_labels=labels)
 
     # high-missing variant: 5/8 training samples have None → 62.5% missing rate (> 0.10)
     high_missing = {f"s{i:02d}": ("0|0" if i > 5 else None) for i in range(1, 11)}
@@ -104,10 +104,10 @@ def test_missingness_filter_runs_before_imputation(sample_metadata):
     """Dropped variants never appear in imputation_medians."""
     samples = [f"s{i:02d}" for i in range(1, 11)]
     labels = {
-        s: ("blue" if i < 5 else ("brown" if i < 9 else "green"))
+        s: ("CEU" if i < 5 else ("CHB" if i < 9 else "YRI"))
         for i, s in enumerate(samples, 1)
     }
-    meta = SampleMetadata(population={s: "EUR" for s in samples}, phenotype_labels=labels)
+    meta = SampleMetadata(population=labels, phenotype_labels=labels)
 
     high_missing = {f"s{i:02d}": (None if i <= 6 else "0|0") for i in range(1, 11)}
     dataset = RawSnpDataset(
@@ -130,10 +130,10 @@ def test_imputation_medians_computed_from_training_split_only(sample_metadata):
     # Training-only median = 0. Full-data median = 1.
     samples = [f"s{i:02d}" for i in range(1, 11)]
     labels = {
-        s: ("blue" if i < 5 else ("brown" if i < 9 else "green"))
+        s: ("CEU" if i < 5 else ("CHB" if i < 9 else "YRI"))
         for i, s in enumerate(samples, 1)
     }
-    meta = SampleMetadata(population={s: "EUR" for s in samples}, phenotype_labels=labels)
+    meta = SampleMetadata(population=labels, phenotype_labels=labels)
 
     # variant_id will be "15_100_A_G"
     # training split (first 8) → genotype "0|0" (dosage 0)
@@ -189,8 +189,8 @@ def test_dosage_encoding(raw_gt: str, expected_dosage: int, sample_metadata):
     """Homozygous ref→0, heterozygous→1, homozygous alt→2."""
     samples = ["s01", "s02"]
     meta = SampleMetadata(
-        population={s: "EUR" for s in samples},
-        phenotype_labels={"s01": "blue", "s02": "brown"},
+        population={"s01": "CEU", "s02": "CHB"},
+        phenotype_labels={"s01": "CEU", "s02": "CHB"},
     )
     variant = RawVariant(
         chrom="15", pos=100, ref="A", alt="G",

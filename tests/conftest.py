@@ -15,22 +15,22 @@ from genomic_ancestry_pipeline.models import (
     SampleMetadata,
 )
 
-# 10 samples across 3 phenotype classes to support stratified splitting
+# 10 samples across 3 population classes to support stratified splitting
 # and k-fold cross-validation with k=5 (minimum 2 samples per class).
 SAMPLE_IDS = [f"s{i:02d}" for i in range(1, 11)]
 PHENOTYPE_LABELS = {
-    "s01": "blue",
-    "s02": "blue",
-    "s03": "blue",
-    "s04": "blue",
-    "s05": "brown",
-    "s06": "brown",
-    "s07": "brown",
-    "s08": "brown",
-    "s09": "green",
-    "s10": "green",
+    "s01": "CEU",
+    "s02": "CEU",
+    "s03": "CEU",
+    "s04": "CEU",
+    "s05": "CHB",
+    "s06": "CHB",
+    "s07": "CHB",
+    "s08": "CHB",
+    "s09": "YRI",
+    "s10": "YRI",
 }
-POPULATIONS = {s: "EUR" for s in SAMPLE_IDS}
+POPULATIONS = dict(PHENOTYPE_LABELS)  # the prediction label is the population code
 
 VARIANTS_DEF = [
     {"chrom": "15", "pos": 28513871, "ref": "A", "alt": "G"},
@@ -121,7 +121,7 @@ def feature_matrix(feature_registry: FeatureRegistry) -> FeatureMatrix:
     rng = np.random.default_rng(42)
     n_samples, n_features = len(SAMPLE_IDS), len(VARIANTS_DEF)
     X = rng.integers(0, 3, size=(n_samples, n_features)).astype(float)
-    # phenotype indices: 0=blue (s01-s04), 1=brown (s05-s08), 2=green (s09-s10)
+    # population class indices: 0=CEU (s01-s04), 1=CHB (s05-s08), 2=YRI (s09-s10)
     y = np.array([0, 0, 0, 0, 1, 1, 1, 1, 2, 2])
     splits = ["train"] * 8 + ["test"] * 2
     return FeatureMatrix(

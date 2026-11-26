@@ -33,7 +33,7 @@ def _mock_artifact(feature_registry):
         "booster": MagicMock(spec=xgb.Booster),
         "feature_registry": feature_registry,
         "imputation_medians": {e.variant_id: 1.0 for e in feature_registry.features},
-        "label_encoder": {0: "blue", 1: "brown", 2: "green"},
+        "label_encoder": {0: "CEU", 1: "CHB", 2: "YRI"},
     }
 
 
@@ -172,14 +172,14 @@ def test_inference_applies_stored_feature_registry(minimal_vcf_bytes, feature_re
 
 # @spec PRED-PROC-005
 def test_predict_returns_population_label(minimal_vcf_bytes, feature_registry):
-    """PredictionResult contains a predicted_phenotype string (ancestral population label)."""
+    """PredictionResult.predicted_phenotype is a population label string."""
     artifact = _mock_artifact(feature_registry)
     artifact["booster"] = _mock_booster_proba([0.8, 0.1, 0.1])
 
     result = predict(minimal_vcf_bytes, artifact=artifact, model_artifact_version="models/run1/")
 
     assert isinstance(result.predicted_phenotype, str)
-    assert result.predicted_phenotype in {"blue", "brown", "green"}
+    assert result.predicted_phenotype in {"CEU", "CHB", "YRI"}
 
 
 # @spec PRED-PROC-006
@@ -202,7 +202,7 @@ def test_prediction_result_includes_full_class_probabilities(minimal_vcf_bytes, 
 
     result = predict(minimal_vcf_bytes, artifact=artifact, model_artifact_version="models/run1/")
 
-    assert set(result.class_probabilities.keys()) == {"blue", "brown", "green"}
+    assert set(result.class_probabilities.keys()) == {"CEU", "CHB", "YRI"}
     assert abs(sum(result.class_probabilities.values()) - 1.0) < 1e-6
 
 
@@ -296,7 +296,7 @@ def test_pydantic_validation_failure_raises_not_partial_result(minimal_vcf_bytes
 # Booster loaded from model.json returns the same probabilities as the
 # XGBClassifier that saved it, nor that inference runs without scikit-learn.
 
-LABELS = {0: "blue", 1: "brown", 2: "green"}
+LABELS = {0: "CEU", 1: "CHB", 2: "YRI"}
 
 
 def _sample_vcf(feature_registry) -> bytes:

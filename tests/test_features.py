@@ -21,10 +21,10 @@ def _build_dataset_with_variants(
     """Creates a minimal CleanSnpDataset with the supplied per-variant genotypes."""
     samples = [f"s{i:02d}" for i in range(1, 11)]
     labels = {
-        s: ("blue" if i < 5 else ("brown" if i < 9 else "green"))
+        s: ("CEU" if i < 5 else ("CHB" if i < 9 else "YRI"))
         for i, s in enumerate(samples, 1)
     }
-    meta = SampleMetadata(population={s: "EUR" for s in samples}, phenotype_labels=labels)
+    meta = SampleMetadata(population=labels, phenotype_labels=labels)
     splits = {s: ("test" if s in {"s09", "s10"} else "train") for s in samples}
 
     if variant_ids is None:
@@ -103,7 +103,7 @@ def test_association_filter_retains_top_n_variants(clean_dataset):
 
 def test_association_filter_uses_training_split_only(clean_dataset):
     """Association chi-squared scores are computed on training-split samples only."""
-    # With association_filter=True the result must not use test-split phenotype labels
+    # With association_filter=True the result must not use test-split population labels
     # in the score computation. We verify by checking the returned registry was
     # built from training-split statistics (implementation responsibility).
     result = build_feature_matrix(clean_dataset, association_filter=True, top_n=3)
