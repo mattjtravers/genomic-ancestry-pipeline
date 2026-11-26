@@ -7,6 +7,10 @@ returns a :class:`PredictionResult` with the predicted phenotype, confidence sco
 full class probability distribution, and the top-N markers by per-sample SHAP
 contribution.
 
+The model is held as a plain :class:`xgboost.Booster`, never the scikit-learn
+wrapper, so this module runs without scikit-learn, pandas, or requests installed
+(the Lambda inference image omits them to shorten cold starts).
+
 See ``docs/llds/05_prediction.md`` for the canonical design and
 ``docs/specs/05_prediction.md`` for the EARS specs realized here.
 
@@ -36,6 +40,15 @@ logger = logging.getLogger(__name__)
 
 class PredictionError(Exception):
     """Raised when the inference input is malformed or output validation fails."""
+
+
+class ModelOutputError(Exception):
+    """Raised when the Booster's output is not one row of per-class probabilities.
+
+    Deliberately not a ``ValueError`` or :class:`PredictionError`: it signals a
+    model fault (e.g. an artifact trained with a non-probability objective such
+    as ``multi:softmax``), not bad input, so callers must never map it to a 4xx.
+    """
 
 
 _DOSAGE = {"0|0": 0, "0|1": 1, "1|0": 1, "1|1": 2}
@@ -127,7 +140,8 @@ def _build_feature_vector(
 
 # @spec PRED-PROC-001, PRED-PROC-002, PRED-PROC-003, PRED-PROC-004, PRED-PROC-005,
 #       PRED-PROC-006, PRED-PROC-007, PRED-PROC-008, PRED-PROC-009, PRED-PROC-010,
-#       PRED-PROC-012, PRED-PROC-013, PRED-DATA-001, PRED-DATA-002
+#       PRED-PROC-012, PRED-PROC-013, PRED-PROC-015, PRED-PROC-016, PRED-PROC-017,
+#       PRED-DATA-001, PRED-DATA-002
 def predict(
     vcf_bytes: bytes,
     artifact: dict,
@@ -157,6 +171,9 @@ def predict(
 
     Raises:
         PredictionError: If the VCF contains zero or multiple samples.
+        TypeError: If ``artifact["booster"]`` is not an :class:`xgboost.Booster`.
+        ModelOutputError: If the Booster's probability output is not a single
+            row with one value per label-encoder class.
     """
     logger.info(
         "predict start [artifact_version=%s top_n_markers=%d]",
@@ -164,6 +181,10 @@ def predict(
     )
 
     booster = artifact["booster"]
+    if not isinstance(booster, xgb.Booster):
+        raise TypeError(
+            f"artifact['booster'] must be an xgboost.Booster, got {type(booster).__name__}"
+        )
     registry: FeatureRegistry = artifact["feature_registry"]
     medians: dict[str, float] = artifact["imputation_medians"]
     label_encoder: dict[int, str] = artifact["label_encoder"]
@@ -171,9 +192,23 @@ def predict(
     sample_id, sample_genotypes = _parse_single_sample_vcf(vcf_bytes)
     X = _build_feature_vector(sample_genotypes, registry, medians)
 
-    proba = np.asarray(booster.predict_proba(X))
+    dmatrix = xgb.DMatrix(X)
+    # Under multi:softprob (XGBClassifier's multi-class default, used in training)
+    # Booster.predict returns one probability per class. Any other shape means
+    # the artifact's objective is not what inference assumes; fail loudly rather
+    # than read class indices or margins as probabilities.
+    proba = np.asarray(booster.predict(dmatrix))
+    n_classes = len(label_encoder)
+    if proba.shape != (1, n_classes):
+        logger.error(
+            "predict model-output-shape mismatch [artifact_version=%s shape=%s n_classes=%d]",
+            model_artifact_version, proba.shape, n_classes,
+        )
+        raise ModelOutputError(
+            f"Booster output shape {proba.shape} is not (1, {n_classes}); the artifact's "
+            f"objective must produce per-class probabilities (multi:softprob)."
+        )
     proba_row = proba[0]
-    n_classes = len(proba_row)
 
     predicted_idx = int(np.argmax(proba_row))
     confidence = float(proba_row[predicted_idx])
@@ -182,14 +217,10 @@ def predict(
         label_encoder.get(i, str(i)): float(proba_row[i]) for i in range(n_classes)
     }
 
-    # XGBoost per-sample SHAP via pred_contribs=True requires the low-level Booster
-    # and a DMatrix input. When the artifact holds an XGBClassifier (sklearn wrapper),
-    # get_booster() extracts the underlying Booster; a raw Booster passes through.
-    # Multi-class output shape is (n_samples, n_classes, n_features + 1); binary is
+    # Multi-class SHAP output shape is (n_samples, n_classes, n_features + 1); binary is
     # (n_samples, n_features + 1). We use the predicted-class slice for multi-class
     # so markers reflect what drove this specific prediction.
-    raw_booster = booster.get_booster() if hasattr(booster, "get_booster") else booster
-    contribs = np.asarray(raw_booster.predict(xgb.DMatrix(X), pred_contribs=True))
+    contribs = np.asarray(booster.predict(dmatrix, pred_contribs=True))
     n_features = len(registry.features)
     logger.info(
         "SHAP contribs shape=%s n_features=%d n_classes=%d predicted_idx=%d",
@@ -240,7 +271,7 @@ def predict(
     return result
 
 
-# @spec PRED-PROC-001
+# @spec PRED-PROC-001, PRED-PROC-014, PRED-PROC-015
 def load_artifact(bucket: str, run_id: str) -> dict:
     """Load the artifact bundle from ``s3://{bucket}/models/{run_id}/``.
 
@@ -254,10 +285,10 @@ def load_artifact(bucket: str, run_id: str) -> dict:
 
     Returns:
         Dict with keys ``booster``, ``feature_registry``, ``imputation_medians``,
-        ``label_encoder``, and ``evaluation_report``. The ``booster`` value
-        exposes ``predict_proba`` (sklearn API) for class probabilities; per-sample
-        SHAP via ``predict(..., pred_contribs=True)`` requires routing through the
-        underlying Booster (deferred — see ``docs/llds/05_prediction.md``).
+        ``label_encoder``, and ``evaluation_report``. The ``booster`` value is a
+        plain :class:`xgboost.Booster` deserialized from ``model.json``; training
+        saves an ``XGBClassifier``, whose JSON model format the Booster reads
+        directly, so no scikit-learn import is needed at inference time.
     """
     prefix = (
         run_id if run_id.startswith("models/") and run_id.endswith("/") else f"models/{run_id}/"
@@ -275,8 +306,8 @@ def load_artifact(bucket: str, run_id: str) -> dict:
         tmp_path = Path(tmp.name)
         tmp_path.write_bytes(model_obj["Body"].read())
     try:
-        clf = xgb.XGBClassifier()
-        clf.load_model(str(tmp_path))
+        booster = xgb.Booster()
+        booster.load_model(str(tmp_path))
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -292,7 +323,7 @@ def load_artifact(bucket: str, run_id: str) -> dict:
         bucket, prefix, len(feature_registry.features),
     )
     return {
-        "booster": clf,
+        "booster": booster,
         "feature_registry": feature_registry,
         "imputation_medians": imputation_medians,
         "label_encoder": label_encoder,

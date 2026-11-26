@@ -33,6 +33,9 @@ from typing import Any
 import boto3
 from pydantic import ValidationError
 
+# @spec DEPLOY-BE-038, DEPLOY-BE-039 — this module's import graph must stay free of
+# scikit-learn, pandas, and requests, and importing it must not touch S3: the
+# Lambda init phase is capped at 10 s (docs/llds/06_deployment.md § Cold start).
 from genomic_ancestry_pipeline.prediction import load_artifact, predict
 
 # @spec DEPLOY-BE-019 — region pin; do not rely on AWS_DEFAULT_REGION.

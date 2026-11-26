@@ -14,7 +14,12 @@ import xgboost as xgb
 
 from genomic_ancestry_pipeline import prediction as prediction_module
 from genomic_ancestry_pipeline.models import PredictionResult
-from genomic_ancestry_pipeline.prediction import PredictionError, load_artifact, predict
+from genomic_ancestry_pipeline.prediction import (
+    ModelOutputError,
+    PredictionError,
+    load_artifact,
+    predict,
+)
 
 CHILD_SCRIPT = Path(__file__).parent / "_inference_without_training_libs.py"
 
@@ -24,7 +29,7 @@ CHILD_SCRIPT = Path(__file__).parent / "_inference_without_training_libs.py"
 def _mock_artifact(feature_registry):
     """Returns a minimal in-memory artifact bundle dict for testing."""
     return {
-        "booster": MagicMock(),
+        "booster": MagicMock(spec=xgb.Booster),
         "feature_registry": feature_registry,
         "imputation_medians": {e.variant_id: 1.0 for e in feature_registry.features},
         "label_encoder": {0: "blue", 1: "brown", 2: "green"},
@@ -409,8 +414,14 @@ def test_predict_raises_when_booster_output_is_not_one_probability_row(
     )
     artifact["booster"] = booster
 
-    with pytest.raises(PredictionError):
+    with pytest.raises(ModelOutputError):
         predict(minimal_vcf_bytes, artifact=artifact, model_artifact_version="models/run1/")
+
+
+# @spec PRED-PROC-017
+def test_model_output_error_is_not_an_input_error_class():
+    assert not issubclass(ModelOutputError, ValueError)
+    assert not issubclass(ModelOutputError, PredictionError)
 
 
 # @spec PRED-PROC-015

@@ -5,10 +5,10 @@
 - [x] **PRED-PROC-001**: The `predict` function shall accept a pre-loaded artifact bundle dict from the caller and shall not load from S3 internally; the caller is responsible for providing a complete bundle (as defined in TRAIN-DATA-001) before invoking inference.
 - [x] **PRED-PROC-002**: The system shall record the S3 bundle prefix of the artifact used in every `PredictionResult` under `model_artifact_version`, in the form `models/{run_id}/` (e.g. `models/20240115-a3f2c1/`).
 
-- [ ] **PRED-PROC-014**: `load_artifact()` shall deserialize `model.json` into a plain `xgb.Booster` and return it under the bundle key `booster`; it shall not construct an `xgb.XGBClassifier`.
-- [ ] **PRED-PROC-016**: `predict()` shall accept the bundle's `booster` only as an `xgb.Booster`, and shall not call `predict_proba()` or `get_booster()`.
-- [ ] **PRED-PROC-017**: If the `xgb.Booster`'s class-probability output for the input sample is not a single row with exactly as many values as the label encoder has classes, then `predict()` shall raise an error and shall not return a `PredictionResult`.
-- [ ] **PRED-PROC-015**: `load_artifact()` and `predict()`, including every module they import, shall run to completion when scikit-learn, pandas, and requests cannot be imported.
+- [x] **PRED-PROC-014**: `load_artifact()` shall deserialize `model.json` into a plain `xgb.Booster` and return it under the bundle key `booster`; it shall not construct an `xgb.XGBClassifier`.
+- [x] **PRED-PROC-016**: `predict()` shall accept the bundle's `booster` only as an `xgb.Booster`, and shall not call `predict_proba()` or `get_booster()`.
+- [x] **PRED-PROC-017**: If the `xgb.Booster`'s class-probability output for the input sample is not a single row with exactly as many values as the label encoder has classes, then `predict()` shall raise `ModelOutputError`, an exception class that is neither a `ValueError` nor a `PredictionError`, and shall not return a `PredictionResult`.
+- [x] **PRED-PROC-015**: `load_artifact()` and `predict()`, including every module they import, shall run to completion when scikit-learn, pandas, and requests cannot be imported.
 
 ## Input Validation
 
@@ -23,7 +23,7 @@
 ## Prediction Output
 
 - [x] **PRED-PROC-005**: The system shall produce a predicted phenotype label for each input sample by applying the loaded XGBoost model to the preprocessed feature vector.
-- [ ] **PRED-PROC-006**: The system shall produce a confidence score for each prediction, defined as the probability assigned to the predicted class by the loaded `xgb.Booster`'s class-probability output (`booster.predict(xgb.DMatrix(X))`), i.e. the maximum class probability, in the range [0.0, 1.0].
+- [x] **PRED-PROC-006**: The system shall produce a confidence score for each prediction, defined as the probability assigned to the predicted class by the loaded `xgb.Booster`'s class-probability output (`booster.predict(xgb.DMatrix(X))`), i.e. the maximum class probability, in the range [0.0, 1.0].
 - [x] **PRED-DATA-001**: The system shall include the full class probability distribution (all classes, mapped to human-readable labels via `label_encoder.json`) in the `PredictionResult`.
 
 ## Marker Traceability

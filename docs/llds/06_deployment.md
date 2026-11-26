@@ -107,6 +107,15 @@ Lambda caps the init phase at 10 seconds. If init runs longer, Lambda abandons i
 
 The design therefore keeps the init phase well under 10 seconds by keeping the handler's import graph small: the inference image installs only the libraries inference imports (§ Container Images), and the prediction code uses the plain `xgb.Booster` rather than the scikit-learn wrapper (`docs/llds/05_prediction.md § Model Handle`). With scikit-learn and pandas installed, `xgboost` imports both, and they dominate the handler's import time. The model-bundle load stays in the first request rather than the init phase, so a slow S3 read cannot push init past its cap.
 
+Measured on the deployed inference image (model run `20260520-3c1123`, 2026-11-26):
+
+| Cold start | Init phase | First request (incl. model load) | Client-side `GET /health` |
+|---|---|---|---|
+| First after a deploy | 7.7 s | 1.1 s | 9.1 s |
+| Later cold starts | 1.0–1.8 s | 0.8–1.2 s | 2.2–3.5 s |
+
+The handler's Python imports take under a second; the rest of the first post-deploy init is Lambda pulling the image from ECR into a cold execution environment, which later cold starts largely skip because Lambda caches the image. That first cold start leaves about 2 seconds of margin under the 10-second init cap, so anything added to the inference image or the handler's import graph spends that margin; re-measure after any such change.
+
 ### API routes
 
 The Lambda is fronted by an **API Gateway HTTP API** (not REST API) — HTTP API is materially cheaper and lower-latency; we use none of REST API's extra features.
@@ -235,9 +244,7 @@ Two roles:
 2. ✅ Lambda chosen over SageMaker endpoint for inference (serverless, cost-effective for low-frequency demo use)
 3. ✅ Single training run; model version is fixed at deploy time via `MODEL_RUN_ID` — no model selection UI or versioning logic needed
 4. ✅ SAM owns inference IaC; SageMaker Python SDK owns training launch; the two halves are intentionally separate tools
-
-### Open
-1. Whether the trimmed inference image keeps the init phase under 10 seconds and a cold `GET /health` under 30 seconds end to end. Measured after each image change from the `INIT_REPORT` / `REPORT` lines in the function's log group and the client-side time of the first `GET /health`.
+5. ✅ The inference image keeps the init phase under Lambda's 10-second cap and a cold `GET /health` well under the gateway's 30-second cutoff (§ Cold start)
 
 ### Deferred
 1. API Gateway authentication (API key vs Cognito) — out of scope for SDD demo; the browser client could not keep an API key secret in any case
