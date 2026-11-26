@@ -9,10 +9,13 @@ The prediction component is the component most directly serving the Business Ana
 ## Inference Pipeline
 
 1. Accept a pre-loaded artifact bundle dict from the caller — loading from S3 is the caller's responsibility
-2. Accept raw SNP input — VCF must contain exactly one sample; reject multi-sample VCFs
+2. Accept raw SNP input — genotypes are read as 0/1/2 alternate-allele dosages from phased (`0|1`) or unphased (`0/1`) calls alike, since the model uses dosage only, not phase; a leading `chr` on the chromosome name is removed (case-insensitively), because the `FeatureRegistry` uses bare names (`15`, from the GRCh37 1000 Genomes release) while many VCFs write `chr15`; VCF must contain exactly one sample; reject multi-sample VCFs, VCFs with no sample columns, and VCFs sharing no variants with the `FeatureRegistry` by raising `PredictionError`, inference's input-error class (callers treat it as the client's fault)
 3. Apply preprocessing using stored `imputation_medians` (no re-fitting):
    - Variants present in the registry but absent from the input VCF are imputed to their training median
    - Variants present in the input VCF but absent from the registry are silently dropped — they cannot influence the prediction because the model has no weight for them
+   - A registry variant counts as present only when its row carries a genotype the parser can read; a row whose genotype is missing (`./.`) or unrecognised is imputed exactly like an absent row
+   - If no registry variant is present in the input, the feature vector would be built entirely from training medians and the prediction would say nothing about the sample, so `predict()` raises `PredictionError` instead of predicting
+   - `predict()` logs, at `INFO`, how many registry variants were present out of the registry total, so the distribution of coverage across real inputs is visible
 4. Apply feature selection using stored `feature_registry` (select same variants, same column order)
 5. Run the loaded `xgb.Booster` on the feature vector (`booster.predict(xgb.DMatrix(X))`) to get class probabilities
 6. Derive predicted label and confidence score from probabilities
@@ -108,7 +111,9 @@ Inference results are returned to the caller only — they are not persisted to 
 
 ### Deferred
 1. Probability calibration (Platt scaling / isotonic regression) for more accurate confidence scores
-2. Batch prediction API vs single-sample prediction — current design processes one sample at a time; batching deferred
+2. Minimum variant coverage threshold — a prediction is refused only when no registry variant is present; a higher threshold (e.g. a minimum fraction of registry variants) needs calibration against real inputs, which the coverage log line (`PRED-PROC-021`) is there to collect
+3. Reference-build detection — the model's variants are GRCh37 coordinates. A GRCh38 VCF names the same SNPs at different positions, so it matches few or no registry variants even after `chr` normalisation: no matches is refused, but a few coincidental matches would still yield a weak prediction. Detecting the build (from `##reference` / `##contig` headers, or by position checks) and refusing or converting non-GRCh37 input is deferred
+4. Batch prediction API vs single-sample prediction — current design processes one sample at a time; batching deferred
 
 ## References
 

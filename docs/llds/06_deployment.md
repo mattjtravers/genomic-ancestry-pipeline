@@ -165,10 +165,21 @@ The handler fails immediately and loudly on any error. There is no retry, no deg
 | Model artifact at `s3://{bucket}/models/{MODEL_RUN_ID}/` is missing, incomplete (any of the bundled files absent), or unreadable on cold-start load (any route) | `503` | `MODEL_UNAVAILABLE` |
 | `/predict` request body is not valid JSON, missing required fields, or fails Pydantic validation | `400` | `INVALID_INPUT` |
 | `/predict` VCF parsing fails (malformed VCF, no usable variants for the model's feature set) | `400` | `INVALID_VCF` |
+| `/predict` VCF has no sample columns (per `PRED-PROC-018`) | `400` | `INVALID_VCF` |
 | `/predict` VCF contains more than one sample (per `PRED-PROC-012`) | `400` | `INVALID_VCF` |
 | `PredictionResult` Pydantic validation fails (per `PRED-PROC-010`) | `500` | `INFERENCE_FAILED` |
 | Model inference or SHAP computation raises | `500` | `INFERENCE_FAILED` |
 | Any other unhandled exception | `500` | `INTERNAL_ERROR` |
+
+The handler maps exceptions from `predict()` by class, never by message:
+
+| Exception from `predict()` | Response |
+|---|---|
+| `PredictionError` (input the model cannot use: no sample columns, more than one sample, no variants in common with the model's feature set) | `400 INVALID_VCF` |
+| Pydantic `ValidationError` (`PredictionResult` failed validation) | `500 INFERENCE_FAILED` |
+| `ModelOutputError`, or any other exception — including a plain `ValueError` | `500 INFERENCE_FAILED` |
+
+`PredictionError` is the only signal of bad client input. Any other exception from `predict()` means a fault on the server side, so it is reported as a 500 even when its type (such as a stray `ValueError` from NumPy) might look like an input problem.
 
 Model-bundle completeness is checked on the first load (cold start, on the first `/predict` or `/health` call): all of `model.json`, `feature_registry.json`, `imputation_medians.json`, `evaluation_report.json`, `label_encoder.json` must be present. If any are missing, the handler raises and every subsequent request in that container lifecycle short-circuits to `503 MODEL_UNAVAILABLE` without re-attempting the load. A load cut short by the 29-second invocation timeout is not a failed load: it is not recorded as failed, and the next request re-attempts it.
 

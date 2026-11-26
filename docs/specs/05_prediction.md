@@ -12,13 +12,21 @@
 
 ## Input Validation
 
-- [x] **PRED-PROC-012**: If the input VCF contains more than one sample, then the system shall raise a structured error and shall not produce a prediction.
+- [x] **PRED-PROC-012**: If the input VCF contains more than one sample, then `predict()` shall raise `PredictionError` and shall not produce a prediction.
+- [ ] **PRED-PROC-019**: If none of the `FeatureRegistry`'s variants has a genotype in the input VCF that the parser can read, then `predict()` shall raise `PredictionError` and shall not produce a prediction.
+- [ ] **PRED-PROC-022**: The VCF parser shall remove a leading `chr` prefix, compared case-insensitively, from the `CHROM` field before forming a variant ID, so that `chr15` and `15` identify the same chromosome.
+- [ ] **PRED-PROC-020**: The VCF parser shall read the unphased genotypes `0/0`, `0/1`, `1/0`, and `1/1` as dosages 0, 1, 1, and 2 respectively, the same as their phased forms `0|0`, `0|1`, `1|0`, and `1|1`.
+- [x] **PRED-PROC-018**: If the input VCF's `#CHROM` header line has no sample columns, then `predict()` shall raise `PredictionError` and shall not produce a prediction.
 
 ## Inference Preprocessing
 
 - [x] **PRED-PROC-003**: At inference time, the system shall impute missing genotype values using the `imputation_medians` from the loaded artifact bundle, without refitting on the input sample.
 - [x] **PRED-PROC-004**: At inference time, the system shall select and order features using the `FeatureRegistry` from the loaded artifact bundle, without refitting marker selection. Variants present in the registry but absent from the input VCF shall be imputed to their stored training median.
 - [x] **PRED-PROC-013**: At inference time, variants present in the input VCF but absent from the loaded `FeatureRegistry` shall be silently dropped before the feature vector is assembled — the model has no weight for them and they cannot affect the prediction.
+
+## Inference Observability
+
+- [ ] **PRED-PROC-021**: When `predict()` has parsed the input VCF, it shall emit an `INFO` log record containing the number of `FeatureRegistry` variants that have a genotype the parser can read and the total number of `FeatureRegistry` variants.
 
 ## Prediction Output
 

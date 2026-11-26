@@ -25,6 +25,7 @@ from genomic_ancestry_pipeline.deployment import (
     lambda_handler,
     launch_training_job,
 )
+from genomic_ancestry_pipeline.prediction import PredictionError
 
 # ── S3 bucket configuration ────────────────────────────────────────────────────
 
@@ -382,9 +383,9 @@ def test_lambda_returns_400_invalid_input_for_malformed_body():
     assert _body(response).get("error") == "INVALID_INPUT"
 
 
-# @spec DEPLOY-BE-022, PRED-PROC-012
-def test_lambda_returns_400_invalid_vcf_for_multisample():
-    """Multi-sample VCF → 400 INVALID_VCF (per PRED-PROC-012 mapping in error contract table)."""
+# @spec DEPLOY-BE-040
+def test_lambda_maps_prediction_error_to_400_invalid_vcf():
+    """PredictionError from predict() → 400 INVALID_VCF."""
     event = _http_api_event(
         "POST", "/predict",
         body=json.dumps({"vcf": "multi-sample-vcf-content", }),
@@ -392,12 +393,52 @@ def test_lambda_returns_400_invalid_vcf_for_multisample():
     with (
         patch("genomic_ancestry_pipeline.deployment.load_artifact", return_value=_valid_artifact()),
         patch("genomic_ancestry_pipeline.deployment.predict",
-              side_effect=ValueError("VCF contains more than one sample")),
+              side_effect=PredictionError("VCF contains 2 samples")),
         patch.dict("genomic_ancestry_pipeline.deployment._artifact_cache", clear=True),
     ):
         response = lambda_handler(event, context=None)
     assert response["statusCode"] == 400
     assert _body(response).get("error") == "INVALID_VCF"
+
+
+# @spec DEPLOY-BE-040, PRED-PROC-012, PRED-PROC-018
+@pytest.mark.parametrize(
+    "header",
+    [
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\ts2",
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO",
+    ],
+    ids=["two-samples", "no-sample-columns"],
+)
+def test_lambda_returns_400_invalid_vcf_for_unusable_vcf_end_to_end(header):
+    """The real predict() (not a mock) raising on a bad VCF reaches the client as a 400."""
+    import xgboost as xgb
+
+    artifact = {**_valid_artifact(), "booster": MagicMock(spec=xgb.Booster)}
+    vcf = f"##fileformat=VCFv4.1\n{header}\n"
+    event = _http_api_event("POST", "/predict", body=json.dumps({"vcf": vcf}))
+    with (
+        patch("genomic_ancestry_pipeline.deployment.load_artifact", return_value=artifact),
+        patch.dict("genomic_ancestry_pipeline.deployment._artifact_cache", clear=True),
+    ):
+        response = lambda_handler(event, context=None)
+    assert response["statusCode"] == 400
+    assert _body(response).get("error") == "INVALID_VCF"
+
+
+# @spec DEPLOY-BE-041
+def test_lambda_maps_plain_value_error_from_predict_to_500_inference_failed():
+    """A stray ValueError is a server-side fault, not bad input."""
+    event = _http_api_event("POST", "/predict", body=json.dumps({"vcf": "x"}))
+    with (
+        patch("genomic_ancestry_pipeline.deployment.load_artifact", return_value=_valid_artifact()),
+        patch("genomic_ancestry_pipeline.deployment.predict",
+              side_effect=ValueError("operands could not be broadcast together")),
+        patch.dict("genomic_ancestry_pipeline.deployment._artifact_cache", clear=True),
+    ):
+        response = lambda_handler(event, context=None)
+    assert response["statusCode"] == 500
+    assert _body(response).get("error") == "INFERENCE_FAILED"
 
 
 # @spec DEPLOY-BE-022, PRED-PROC-010

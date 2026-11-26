@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -440,3 +441,111 @@ def test_inference_runs_without_sklearn_pandas_requests(trained_bundle):
     )
     assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
     assert proc.stdout.startswith("OK"), proc.stdout
+
+
+# ── VCF parsing and coverage — PRED-PROC-018 / 019 / 020 / 021 / 022 ───────────
+
+_HEADER = (
+    "##fileformat=VCFv4.1\n"
+    "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1\n"
+)
+
+
+def _vcf(*rows: str) -> bytes:
+    return (_HEADER + "".join(r + "\n" for r in rows)).encode()
+
+
+# @spec PRED-PROC-018
+def test_vcf_with_no_sample_columns_raises_prediction_error(feature_registry):
+    vcf = b"##fileformat=VCFv4.1\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+    artifact = _mock_artifact(feature_registry)
+    with pytest.raises(PredictionError):
+        predict(vcf, artifact=artifact, model_artifact_version="models/run1/")
+
+
+# @spec PRED-PROC-019
+@pytest.mark.parametrize(
+    "rows",
+    [
+        ("15\t99999999\t.\tA\tG\t.\tPASS\t.\tGT\t0|1",),  # only non-registry variants
+        ("15\t28513871\t.\tA\tG\t.\tPASS\t.\tGT\t./.",),  # registry row, missing genotype
+        ("15\t28513871\t.\tA\tG\t.\tPASS\t.\tGT\t0|2",),  # registry row, unreadable genotype
+        (),  # header only
+    ],
+    ids=["no-registry-variants", "missing-genotype", "unreadable-genotype", "no-rows"],
+)
+def test_no_readable_registry_genotype_raises_prediction_error(feature_registry, rows):
+    artifact = _mock_artifact(feature_registry)
+    artifact["booster"] = _mock_booster_proba([0.8, 0.1, 0.1])
+    with pytest.raises(PredictionError):
+        predict(_vcf(*rows), artifact=artifact, model_artifact_version="models/run1/")
+    artifact["booster"].predict.assert_not_called()
+
+
+# @spec PRED-PROC-019
+def test_one_readable_registry_genotype_is_enough_to_predict(feature_registry):
+    artifact = _mock_artifact(feature_registry)
+    artifact["booster"] = _mock_booster_proba([0.8, 0.1, 0.1])
+    result = predict(
+        _vcf("15\t28513871\t.\tA\tG\t.\tPASS\t.\tGT\t0|1"),
+        artifact=artifact,
+        model_artifact_version="models/run1/",
+    )
+    assert isinstance(result, PredictionResult)
+
+
+# @spec PRED-PROC-020
+@pytest.mark.parametrize(
+    ("gt", "dosage"),
+    [
+        ("0/0", 0), ("0/1", 1), ("1/0", 1), ("1/1", 2),
+        ("0|0", 0), ("0|1", 1), ("1|0", 1), ("1|1", 2),
+    ],
+)
+def test_phased_and_unphased_genotypes_read_as_dosage(gt, dosage):
+    _, genotypes = prediction_module._parse_single_sample_vcf(
+        _vcf(f"15\t28513871\t.\tA\tG\t.\tPASS\t.\tGT\t{gt}")
+    )
+    assert genotypes == {"15_28513871_A_G": dosage}
+
+
+# @spec PRED-PROC-022
+@pytest.mark.parametrize("chrom", ["chr15", "CHR15", "Chr15", "15"])
+def test_leading_chr_prefix_is_removed_from_variant_id(chrom):
+    _, genotypes = prediction_module._parse_single_sample_vcf(
+        _vcf(f"{chrom}\t28513871\t.\tA\tG\t.\tPASS\t.\tGT\t0|1")
+    )
+    assert genotypes == {"15_28513871_A_G": 1}
+
+
+# @spec PRED-PROC-022, PRED-PROC-019
+def test_chr_prefixed_vcf_matches_bare_registry_and_predicts(feature_registry):
+    artifact = _mock_artifact(feature_registry)
+    artifact["booster"] = _mock_booster_proba([0.8, 0.1, 0.1])
+    result = predict(
+        _vcf("chr15\t28513871\t.\tA\tG\t.\tPASS\t.\tGT\t0/1"),
+        artifact=artifact,
+        model_artifact_version="models/run1/",
+    )
+    assert isinstance(result, PredictionResult)
+
+
+# @spec PRED-PROC-021
+def test_predict_logs_registry_coverage_at_info(feature_registry, caplog):
+    artifact = _mock_artifact(feature_registry)
+    artifact["booster"] = _mock_booster_proba([0.8, 0.1, 0.1])
+    vcf = _vcf(
+        "15\t28513871\t.\tA\tG\t.\tPASS\t.\tGT\t0|1",  # registry, readable
+        "15\t28230318\t.\tC\tT\t.\tPASS\t.\tGT\t./.",  # registry, missing
+        "15\t99999999\t.\tA\tG\t.\tPASS\t.\tGT\t1|1",  # not in registry
+    )
+    with caplog.at_level("INFO", logger="genomic_ancestry_pipeline.prediction"):
+        predict(vcf, artifact=artifact, model_artifact_version="models/run1/")
+    coverage = [
+        r for r in caplog.records
+        if r.levelname == "INFO" and re.search(r"present=1\b.*total=5\b", r.getMessage())
+    ]
+    assert coverage, (
+        "expected an INFO record with present=1 and total=5; got "
+        f"{[r.getMessage() for r in caplog.records]}"
+    )

@@ -69,5 +69,7 @@
 ## Inference Error Contract
 
 - [ ] **DEPLOY-BE-021**: On its first model load (cold start, on the first `POST /predict` or `GET /health` request), the Lambda shall verify that every file in the artifact bundle defined by `TRAIN-DATA-001` is present and readable at `s3://{PHENO_S3_BUCKET}/models/{MODEL_RUN_ID}/`; if any file is missing or unreadable, every request in that container lifecycle shall short-circuit to a `503 MODEL_UNAVAILABLE` response without re-attempting the load.
+- [ ] **DEPLOY-BE-040**: When `predict()` raises `PredictionError` during a `POST /predict` request, the Lambda shall return `400 INVALID_VCF`.
+- [ ] **DEPLOY-BE-041**: When `predict()` raises any exception other than `PredictionError` during a `POST /predict` request, including a plain `ValueError`, the Lambda shall return `500 INFERENCE_FAILED`.
 - [ ] **DEPLOY-BE-037**: If an invocation reaches the Lambda timeout while loading the model artifact bundle, the Lambda shall not record the load as failed, and the next request in that container shall re-attempt the load.
 - [ ] **DEPLOY-BE-022**: Every Lambda error response shall carry the HTTP status defined in the LLD's `§ Error contract` table (`503 MODEL_UNAVAILABLE`, `400 INVALID_INPUT`, `400 INVALID_VCF`, `500 INFERENCE_FAILED`, `500 INTERNAL_ERROR`), a JSON body of shape `{"error": <code>, "detail": <message>}`, and a `logger.error` line carrying the same code, the detail, and the AWS request id.
